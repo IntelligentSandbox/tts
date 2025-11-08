@@ -1,2 +1,0 @@
-# this is an example
-# move this file to mod_blocklist.txt
