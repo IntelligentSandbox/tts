@@ -1,5 +1,3 @@
 .venv
 src/private/
-dataset/
 __pycache__/
-data/
