@@ -114,7 +114,7 @@ async function loadSounds() {
     }
   } catch {}
 }
-
+// TODO: I don't parse out [fast] or other attributes
 function parseParts(input, fallbackVoice) {
   const reVoice = /(^|\s)([a-z0-9_]+):\s*/gi;
   const reSfx = /\[sfx:([a-z0-9_]+)\]/gi;
