@@ -289,7 +289,7 @@ document.addEventListener("click", async (e) => {
       case "oauth-refresh":
         await handleOAuthWhoami();
         break;
-      case "login-twitch":
+      case "login-oauth":
         window.location.href = "/api/auth/login?provider=twitch";
         break;
     }

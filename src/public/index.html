@@ -12,7 +12,7 @@
   <div id="auth">
     <input id="key_admin" type="password" autocomplete="off" placeholder="admin key" />
     <button id="login_admin" data-action="login-admin">login admin</button>
-    <button id="login_twitch" data-action="login-twitch" style="margin-left:8px;">login with Twitch</button>
+    <button id="login_oauth" data-action="login-oauth" style="margin-left:8px;">login w/ oauth</button>
     <button id="logout" data-action="logout">logout</button>
     <small id="auth_status">not logged in</small>
   </div>
@@ -23,7 +23,7 @@
     <button id="refresh" data-action="refresh">refresh</button>
     <div id="toggles">
       <label><input type="checkbox" id="autoplay" data-action="toggle-autoplay"> autoplay</label>
-      <label><input type="checkbox" id="pollq" data-action="toggle-poll"> queue poll</label>
+      <label><input type="checkbox" id="pollq" data-action="toggle-poll"> queue poll (live)</label>
     </div>
   </div>
 
@@ -72,26 +72,22 @@
   </div>
 
   <div id="oauth_admin" style="display:none; margin:10px 0;">
-    <span class="badge">OAuth mappings (admin)</span>
-    <div style="margin-top:6px;">
-      <label>provider</label>
-      <select id="map_provider">
-        <option value="twitch">twitch</option>
-      </select>
-      <label>remote id/login</label>
-      <input id="map_remote" placeholder="twitch id or login" />
-      <label>role</label>
-      <select id="map_role">
-        <option value="admin">admin</option>
-        <option value="mod">mod</option>
-      </select>
-      <button id="map_add">add mapping</button>
-    </div>
-    <div id="map_list" style="margin-top:8px;"></div>
-    <div style="margin-top:8px;">
-      <button id="oauth_refresh" data-action="oauth-refresh">Fetch last OAuth user</button>
-      <div id="oauth_whoami" style="margin-top:6px;"></div>
-    </div>
+    <span class="badge">oauth mappings (admin)</span>
+    <label>provider</label>
+    <select id="map_provider">
+      <option value="twitch">twitch</option>
+    </select>
+    <label>id</label>
+    <input id="map_remote" placeholder="twitch id or login" />
+    <label>role</label>
+    <select id="map_role">
+      <option value="admin">admin</option>
+      <option value="mod">mod</option>
+    </select>
+    <button id="map_add">add mapping</button>
+  </div>
+  <button id="oauth_refresh" data-action="oauth-refresh">fetch</button>
+  <div id="oauth_whoami" style="margin-top:6px;"></div>
   </div>
 
   <audio id="player" controls></audio>
