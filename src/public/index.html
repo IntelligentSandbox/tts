@@ -27,6 +27,14 @@
     </div>
   </div>
 
+  <div id="alias_admin" style="display:none; margin:10px 0;">
+    <span class="badge">add alias (admin)</span>
+    <input id="alias_name" placeholder="alias name (e.g. brian)" /> ➜
+    <select id="alias_target"></select>
+    <button id="alias_add" data-action="alias-add">add alias</button>
+  </div>
+
+
   <div id="row2">
     <label>preset</label>
     <select id="preset">
@@ -49,13 +57,6 @@
     <textarea id="tts" rows="5" cols="90" placeholder="brian: hello or [fast] hello"></textarea>
     <div><button id="submit" data-action="submit-text" type="button" disabled>add</button></div>
   </form>
-
-  <div id="alias_admin" style="display:none; margin:10px 0;">
-    <span class="badge">add alias (admin)</span>
-    <input id="alias_name" placeholder="alias name (e.g. brian)" />
-    <select id="alias_target"></select>
-    <button id="alias_add" data-action="alias-add">add alias</button>
-  </div>
 
   <div id="token_admin" style="display:none; margin:10px 0;">
     <span class="badge">overlay token (admin)</span>
@@ -85,8 +86,8 @@
       <option value="mod">mod</option>
     </select>
     <button id="map_add">add mapping</button>
+    <button id="oauth_refresh" data-action="oauth-refresh">fetch</button>
   </div>
-  <button id="oauth_refresh" data-action="oauth-refresh">fetch</button>
   <div id="oauth_whoami" style="margin-top:6px;"></div>
   </div>
 
