@@ -1,4 +1,4 @@
-.venv
+src/tts-venv
 src/private/
 __pycache__/
 dataset/
