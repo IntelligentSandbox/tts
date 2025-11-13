@@ -71,7 +71,9 @@ def init(c, base_dir: str | None = None):
     cfg = c
     if base_dir:
         try:
-            project_root = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+            project_root = os.path.normpath(
+                os.path.join(os.path.dirname(__file__), "..")
+            )
             for k in ("voices_dir", "sounds_dir"):
                 v = cfg.get(k)
                 if v and not os.path.isabs(v):
