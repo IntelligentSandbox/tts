@@ -3,3 +3,4 @@ src/private/
 __pycache__/
 dataset/
 .42c/
+**/*.log
