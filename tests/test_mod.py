@@ -38,7 +38,8 @@ def test_slur_censor_mask_drop_and_censor(tmp_path):
 
 def test_moderator_filter_urls_and_emojis():
     m = mod.Moderator({"strip_urls": True, "strip_emojis": True, "censor_slurs": False})
-    out, flags = m.filter("check this https://example.com 😃")
+    out, flags = m.filter("check 🛅 this https://example.com 😃")
+    print(out)
     assert "[link]" in out
     assert flags["urls"] == 1
     assert flags["emojis"] == 1
@@ -75,4 +76,3 @@ def test_moderator_filter_slurs_mask_and_drop(tmp_path):
 
 if __name__ == "__main__":
     pytest.main(["-q"])
-

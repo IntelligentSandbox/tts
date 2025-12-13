@@ -3,20 +3,8 @@ import re
 import unicodedata
 import time
 
+
 _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
-_emoji_re = re.compile(
-    "["
-    + "\U0001f600-\U0001f64f"
-    + "\U0001f300-\U0001f5ff"
-    + "\U0001f680-\U0001f6ff"
-    + "\U0001f1e6-\U0001f1ff"
-    + "\U00002700-\U000027bf"
-    + "\U0001f900-\U0001f9ff"
-    + "\U00002600-\U000026ff"
-    + "\U00002b00-\U00002bff"
-    + "]",
-    flags=re.UNICODE,
-)
 
 _leet = {
     "a": "[a@4]",
@@ -31,14 +19,44 @@ _leet = {
     "z": "[z2]",
 }
 
+_emoji = set()
+
+# TODO: https://unicode.org/reports/tr51/tr51-12.html#Identification
+with open(
+    os.path.join(os.path.dirname(__file__), "assets", "emoji-data.txt"),
+    encoding="utf-8",
+) as f:
+    for line in f:
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+
+        code = line.split(";", 1)[0].strip()
+
+        if " " in code:
+            continue
+
+        if ".." in code:
+            a, b = code.split("..")
+            _emoji.update(range(int(a, 16), int(b, 16) + 1))
+        else:
+            _emoji.add(int(code, 16))
+
+
+def _remove_emojis(s):
+    """Remove Unicode emoji characters from a string."""
+    return "".join(ch for ch in s if ord(ch) not in _emoji)
+
 
 def _mask_token(src):
+    """Mask all but the first and last character with asterisks."""
     return (
         "*" * len(src) if len(src) <= 2 else (src[0] + "*" * (len(src) - 2) + src[-1])
     )
 
 
 def _normalize(s):
+    """Normalize a Unicode string using NFKD and remove combining characters."""
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if not unicodedata.combining(ch))
 
@@ -130,6 +148,7 @@ class SlurCensor:
             return s, 0
         return self._drop(s) if mode == "drop" else self._mask(s)
 
+
 class Moderator:
     def __init__(self, cfg=None):
         cfg = cfg or {}
@@ -151,7 +170,7 @@ class Moderator:
 
         if self.strip_emojis:
             before = out
-            out = _emoji_re.sub("", out)
+            out = _remove_emojis(out)
             if out != before:
                 flags["emojis"] = 1
 
