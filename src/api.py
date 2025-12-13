@@ -99,7 +99,9 @@ def make_app(cfg, config_path: str | None = None):
             os.path.join(os.path.dirname(__file__), "private", "config.yaml"),
             os.path.join(os.path.dirname(__file__), "config.yaml"),
             os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "private", "config.yaml"),
+            os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "private", "config.yaml"
+            ),
             os.path.join(os.getcwd(), "config.yaml"),
         ]
         for p in possible:
@@ -129,14 +131,18 @@ def make_app(cfg, config_path: str | None = None):
         or cfg.get("secrets_file")
         or os.path.join(os.path.dirname(__file__), "private", "secrets.yaml")
     )
-    secret = s.get("secret") or sec.ensure_session_secret(secrets_file, base_dir=config_dir)
+    secret = s.get("secret") or sec.ensure_session_secret(
+        secrets_file, base_dir=config_dir
+    )
     db.init_db(
         cfg.get(
             "db_file",
             os.path.join(os.path.dirname(__file__), "private", "data", "tts.db"),
         )
     )
-    app.state.jwt_secret = cfg.get("jwt_secret") or sec.ensure_jwt_secret(secrets_file, base_dir=config_dir)
+    app.state.jwt_secret = cfg.get("jwt_secret") or sec.ensure_jwt_secret(
+        secrets_file, base_dir=config_dir
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=secret,
@@ -336,7 +342,9 @@ def make_app(cfg, config_path: str | None = None):
                 if request and request.app.state.cfg
                 else None
             ),
-            base_dir=(request.app.state.config_dir if request and request.app.state else None),
+            base_dir=(
+                request.app.state.config_dir if request and request.app.state else None
+            ),
         )
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
@@ -403,7 +411,9 @@ def make_app(cfg, config_path: str | None = None):
                 if request and request.app.state.cfg
                 else None
             ),
-            base_dir=(request.app.state.config_dir if request and request.app.state else None),
+            base_dir=(
+                request.app.state.config_dir if request and request.app.state else None
+            ),
         )
         role = mapped.get(str(twitch_id)) or mapped.get((login or "").lower())
         if role == "admin":
@@ -438,7 +448,9 @@ def make_app(cfg, config_path: str | None = None):
 
     @r.get("/auth/mappings", dependencies=[need("admin")])
     def auth_mappings():
-        maps = sec.list_oauth_mappings(None, app.state.cfg.get("secrets_file"), base_dir=app.state.config_dir)
+        maps = sec.list_oauth_mappings(
+            None, app.state.cfg.get("secrets_file"), base_dir=app.state.config_dir
+        )
         return {"mappings": maps}
 
     @r.post("/auth/mapping", dependencies=[need("admin")])
@@ -450,14 +462,21 @@ def make_app(cfg, config_path: str | None = None):
         if not provider or not remote or role not in ("admin", "mod"):
             raise HTTPException(400, "bad mapping")
         sec.save_oauth_mapping(
-            provider, remote, role, app.state.cfg.get("secrets_file"), base_dir=app.state.config_dir
+            provider,
+            remote,
+            role,
+            app.state.cfg.get("secrets_file"),
+            base_dir=app.state.config_dir,
         )
         return {"ok": True}
 
     @r.delete("/auth/mapping/{provider}/{remote}", dependencies=[need("admin")])
     def auth_mapping_delete(provider: str, remote: str):
         if sec.delete_oauth_mapping(
-            provider, remote, app.state.cfg.get("secrets_file"), base_dir=app.state.config_dir
+            provider,
+            remote,
+            app.state.cfg.get("secrets_file"),
+            base_dir=app.state.config_dir,
         ):
             return {"ok": True}
         raise HTTPException(404, "mapping not found")
