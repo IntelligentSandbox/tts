@@ -15,5 +15,5 @@ os.makedirs("private", exist_ok=True)
 if not os.path.isfile("private/config.yaml"):
     shutil.copyfile("templates/config.yaml.example", "private/config.yaml")
 
-if not os.path.isfile("private/mod_blocklist.yaml"):
-    shutil.copyfile("templates/mod_blocklist.txt.example", "private/mod_blocklist.yaml")
+if not os.path.isfile("private/mod_blocklist.txt"):
+    shutil.copyfile("templates/mod_blocklist.txt.example", "private/mod_blocklist.txt")

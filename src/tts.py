@@ -10,6 +10,7 @@ import subprocess
 import threading
 import hmac
 from collections import OrderedDict
+from log import TTSLogger
 
 import mod
 import secrets_util as sec
@@ -25,6 +26,7 @@ moder = None
 _auth = {"enabled": False, "keys": {}}
 sfx_files = {}
 sfx_aliases = {}
+# TODO: Add singleton TTSLogger function or a global configuration.
 
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 DEFAULT_VOICES = os.path.join(os.path.dirname(__file__), "..", "voices")
@@ -66,21 +68,24 @@ class LRU:
             return {"items": len(self.od), "capacity": self.n, "ttl_sec": self.ttl}
 
 
+def _resolve_path(p: str, base_dir: str | None) -> str:
+    """Resolve a path relative to base_dir if not absolute."""
+    if not p or os.path.isabs(p):
+        return p
+    if base_dir:
+        return os.path.normpath(os.path.join(base_dir, p))
+    return p
+
+
 def init(c, base_dir: str | None = None):
     global cfg, sem, cache, aliases, presets, moder, _auth
     cfg = c
     if base_dir:
         try:
-            project_root = os.path.normpath(
-                os.path.join(os.path.dirname(__file__), "..")
-            )
             for k in ("voices_dir", "sounds_dir"):
                 v = cfg.get(k)
                 if v and not os.path.isabs(v):
-                    if str(v).startswith(".."):
-                        cfg[k] = os.path.normpath(os.path.join(base_dir, v))
-                    else:
-                        cfg[k] = os.path.normpath(os.path.join(project_root, v))
+                    cfg[k] = _resolve_path(v, base_dir)
         except Exception:
             pass
     sem = threading.Semaphore(int(cfg.get("max_concurrency", 2)))
@@ -88,6 +93,8 @@ def init(c, base_dir: str | None = None):
     aliases = dict(cfg.get("aliases", {}))
     presets = dict(cfg.get("presets", {}))
     mcfg = cfg.get("moderation") or {}
+    if mcfg.get("blocklist_path"):
+        mcfg["blocklist_path"] = _resolve_path(mcfg["blocklist_path"], base_dir)
     moder = mod.Moderator(mcfg) if mcfg.get("enabled", False) else None
     a = cfg.get("auth") or {}
     if a.get("enabled"):
@@ -96,6 +103,7 @@ def init(c, base_dir: str | None = None):
     else:
         _auth = {"enabled": False, "keys": {}}
         print("[auth] disabled")
+    voices()
 
 
 def _scan_sounds():
