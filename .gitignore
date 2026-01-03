@@ -4,3 +4,4 @@ __pycache__/
 dataset/
 .42c/
 **/*.log
+voices/*
