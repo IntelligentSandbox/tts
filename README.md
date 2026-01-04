@@ -1,24 +1,34 @@
-# tts
+# Piper TTS Service
 
-https://github.com/user-attachments/assets/d545fa6f-5a4f-4dc7-8460-3a5d0ab15ff1
+Piper TTS Service is a FastAPI-based library for local, high-speed neural text-to-speech synthesis.
 
-## how to use
+## Installation
 
-1. run setup
+```bash
+# Install system requirements
+sudo apt install ffmpeg
 
-```sh
-cd src/
-python setup.py
+# Install python dependencies
+python3 src/setup.sh
+source src/venv/bin/activate
 ```
 
-2. run virtual environment
+## Usage
 
-```sh
-source tts-venv/bin/activate
-```
+```python
+import requests
 
-3. run the app
+# Generate speech with an API key
+response = requests.post(
+    "http://localhost:8000/api/tts",
+    headers={"X-API-Key": "secret-key"},
+    json={
+        "text": "Hello! [SFX: airhorn] Welcome.",
+        "voice": "en_US-ryan-high"
+    }
+)
 
-```sh
-python app.py
+# Save the audio output
+with open("speech.mp3", "wb") as f:
+    f.write(response.content)
 ```
