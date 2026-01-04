@@ -7,3 +7,5 @@ jupyter
 openai-whisper
 PyJWT
 requests
+cachetools
+black
