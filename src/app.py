@@ -1,15 +1,9 @@
 import os
 import argparse
 import uvicorn
-import yaml
 from api import make_app
 from log import TTSLogger
-
-
-def load_cfg(p):
-    with open(p, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
+from config import load_cfg
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
