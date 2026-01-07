@@ -1,12 +1,13 @@
 import logging
 
+LOG_FMT = "%(asctime)s %(levelname)s %(message)s"
+TIME_FMT = "%H:%M:%S"
 
-def configure(debug: bool = False):
-    """Configure logging for TTS service."""
+
+def configure(debug=False):
+    """Configure logging."""
     level = logging.DEBUG if debug else logging.INFO
-    logging.basicConfig(
-        level=level, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"
-    )
+    logging.basicConfig(level=level, format=LOG_FMT, datefmt=TIME_FMT)
 
 
 logger = logging.getLogger("tts")
