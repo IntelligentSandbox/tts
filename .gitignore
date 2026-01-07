@@ -5,3 +5,4 @@ dataset/
 .42c/
 **/*.log
 voices/*
+./public/
