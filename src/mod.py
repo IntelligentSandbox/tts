@@ -1,6 +1,7 @@
 import os
 import re
 import unicodedata
+from util import resolve_path
 
 _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
 
@@ -121,6 +122,39 @@ class SlurCensor:
         self.ensure_fresh()
         return list(self.raw)
 
+    def add(self, term):
+        """Add a term to the blocklist and save to file."""
+        term = (term or "").strip()
+        if not term or term in self.raw:
+            return False
+        self.raw.append(term)
+        self.rxs.append(_obfus_rx(term))
+        self._save()
+        return True
+
+    def remove(self, term):
+        """Remove a term from the blocklist and save to file."""
+        term = (term or "").strip()
+        if term not in self.raw:
+            return False
+        idx = self.raw.index(term)
+        self.raw.pop(idx)
+        self.rxs.pop(idx)
+        self._save()
+        return True
+
+    def _save(self):
+        """Persist current terms to the blocklist file."""
+        if not self.path:
+            return
+        with open(self.path, "w", encoding="utf-8") as f:
+            for t in self.raw:
+                f.write(t + "\n")
+        try:
+            self.mtime = os.path.getmtime(self.path)
+        except OSError:
+            pass
+
     def _mask(self, s):
         """
         Mask slurs in a string
@@ -229,3 +263,62 @@ class Moderator:
             flags["slurs"] = n
 
         return out.strip(), flags
+
+
+_moderator = None
+
+
+def init_moderator(cfg, base_dir: str | None = None):
+    """Initialize the global moderator instance."""
+    global _moderator
+    mcfg = dict(cfg.get("moderation") or {})
+    if mcfg.get("blocklist_path"):
+        mcfg["blocklist_path"] = resolve_path(mcfg["blocklist_path"], base_dir)
+    _moderator = Moderator(mcfg) if mcfg.get("enabled", False) else None
+
+
+def get_moderator():
+    """Get the current moderator instance."""
+    return _moderator
+
+
+def mod_enabled():
+    """Check if moderation is enabled."""
+    return _moderator is not None
+
+
+def mod_list():
+    """List moderation terms."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+    return _moderator.censor.list()
+
+
+def mod_add(term):
+    """Add a moderation term."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+    return {"added": _moderator.censor.add(term)}
+
+
+def mod_remove(term):
+    """Remove a moderation term."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+    return {"removed": _moderator.censor.remove(term)}
+
+
+def mod_reload():
+    """Reload moderation terms."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+    _moderator.censor.reload()
+    return {"reloaded": True}
+
+
+def filter_text(text, mode="drop"):
+    """Filter text using moderation rules."""
+    if not _moderator:
+        return text, {"urls": 0, "emojis": 0, "slurs": 0}
+
+    return _moderator.filter(text, mode)
