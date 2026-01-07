@@ -17,6 +17,15 @@ source src/venv/bin/activate
 
 ## Usage
 
+**Start the service:**
+
+```bash
+cd src/
+python app.py
+```
+
+**Python Example:**
+
 ```python
 import requests
 
