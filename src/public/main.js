@@ -114,15 +114,22 @@ async function loadSounds() {
     }
   } catch {}
 }
-// TODO: I don't parse out [fast] or other attributes
 function parseParts(input, fallbackVoice) {
   const reVoice = /(^|\s)([a-z0-9_]+):\s*/gi;
-  const reSfx = /\[sfx:([a-z0-9_]+)\]/gi;
+  const reSfx = /\[sfx:\s*([a-z0-9_]+)\]/gi;
+  const reSpeed = /\[(fast|slow)\]/gi;
   const parts = [];
   let curVoice = fallbackVoice || null;
   let i = 0,
     m,
     sfxCount = 0;
+
+  let speedMult = 1.0;
+  const speedMatch = reSpeed.exec(input);
+  if (speedMatch) {
+    speedMult = speedMatch[1].toLowerCase() === "fast" ? 0.5 : 2.0;
+    input = input.replace(reSpeed, "").trim();
+  }
 
   function pushText(chunk) {
     if (!chunk) return;
@@ -152,20 +159,26 @@ function parseParts(input, fallbackVoice) {
     i = reVoice.lastIndex;
   }
   pushText(input.slice(i));
-  return parts.length
+  const resultParts = parts.length
     ? parts
     : [{ type: "tts", text: input, voice: fallbackVoice || null }];
+  return { parts: resultParts, speedMult };
 }
 
 async function playText(fullText, fallbackVoice, statusEl) {
   const a = byId("player");
-  const parts = parseParts(fullText, fallbackVoice);
+  const { parts, speedMult } = parseParts(fullText, fallbackVoice);
   const single = parts.length === 1 && parts[0].type !== "sfx";
   statusEl.textContent = single ? "playing..." : "rendering...";
 
+  let ls = numOrNull("length_scale");
+  if (speedMult !== 1.0) {
+    ls = (ls || 1.0) * speedMult;
+  }
+
   try {
     const body = single
-      ? payload(parts[0].text, parts[0].voice)
+      ? { ...payload(parts[0].text, parts[0].voice), length_scale: ls }
       : {
           parts: parts.map((p) =>
             p.type === "sfx"
@@ -174,7 +187,7 @@ async function playText(fullText, fallbackVoice, statusEl) {
           ),
           format: "mp3",
           preset: byId("preset")?.value || null,
-          length_scale: numOrNull("length_scale"),
+          length_scale: ls,
           noise_w: numOrNull("noise_w"),
           sentence_silence: numOrNull("sentence_silence"),
           speaker_id: numOrNull("speaker_id"),
