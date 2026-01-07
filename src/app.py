@@ -1,22 +1,21 @@
 import os
 import argparse
+
 import uvicorn
+
 from api import make_app
 from log import configure, logger
 from config import load_cfg
+from util import DEFAULT_HOST, DEFAULT_PORT
+
+DEFAULT_CFG = os.path.join(os.path.dirname(__file__), "private", "config.yaml")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--cfg",
-        default=os.getenv(
-            "CFG",
-            os.path.join(os.path.dirname(__file__), "private", "config.yaml"),
-        ),
-    )
-    ap.add_argument("--host", default="0.0.0.0")
-    ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--debug", action="store_true", help="debug tts")
+    ap.add_argument("--cfg", default=os.getenv("CFG", DEFAULT_CFG))
+    ap.add_argument("--host", default=DEFAULT_HOST)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--debug", action="store_true")
     a = ap.parse_args()
 
     configure(debug=a.debug)
