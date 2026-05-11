@@ -21,3 +21,15 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+]

@@ -6,6 +6,7 @@ from subprocess import run
 venv_dir = "./tts-venv"
 pip_path = os.path.join(venv_dir, "bin", "pip")
 
+# TODO(89b0): re-sync packages if requirements.txt changes after venv is created
 if not os.path.isdir(venv_dir):
     create(venv_dir, with_pip=True)
     run([pip_path, "install", "-r", os.path.abspath("requirements.txt")], check=True)

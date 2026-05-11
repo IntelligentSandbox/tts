@@ -37,15 +37,37 @@ DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 
 # Built-in kokoro voices (downloaded on demand from HF by the kokoro package).
 # Prefix encodes (a)merican/(b)ritish + (f)emale/(m)ale.
-# TODO: support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
+# TODO support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
 # can pre-cache the full set (avoid first-call HF download) or drop custom voices.
 KOKORO_VOICES = [
-    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
-    "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
-    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
-    "am_michael", "am_onyx", "am_puck", "am_santa",
-    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
-    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+    "af_alloy",
+    "af_aoede",
+    "af_bella",
+    "af_heart",
+    "af_jessica",
+    "af_kore",
+    "af_nicole",
+    "af_nova",
+    "af_river",
+    "af_sarah",
+    "af_sky",
+    "am_adam",
+    "am_echo",
+    "am_eric",
+    "am_fenrir",
+    "am_liam",
+    "am_michael",
+    "am_onyx",
+    "am_puck",
+    "am_santa",
+    "bf_alice",
+    "bf_emma",
+    "bf_isabella",
+    "bf_lily",
+    "bm_daniel",
+    "bm_fable",
+    "bm_george",
+    "bm_lewis",
 ]
 KOKORO_SR = 24000
 
@@ -63,6 +85,7 @@ def _kokoro_pipeline(voice_id):
         p = _kokoro_pipelines.get(lang)
         if p is None:
             from kokoro import KPipeline
+
             p = KPipeline(lang_code=lang)
             _kokoro_pipelines[lang] = p
         return p
@@ -140,7 +163,11 @@ def _scan():
                 "language": "en-gb" if name.startswith("b") else "en-us",
             }
     else:
-        p = os.path.join(base, "piper") if os.path.isdir(os.path.join(base, "piper")) else base
+        p = (
+            os.path.join(base, "piper")
+            if os.path.isdir(os.path.join(base, "piper"))
+            else base
+        )
 
         for j in glob.glob(os.path.join(p, "**", "*.onnx.json"), recursive=True):
             m = j[:-5]
@@ -162,7 +189,9 @@ def _scan():
                     "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
                 ),
                 "speakers": len(meta.get("speakers", [0])),
-                "language": meta.get("language", meta.get("espeak", {}).get("voice", "")),
+                "language": meta.get(
+                    "language", meta.get("espeak", {}).get("voice", "")
+                ),
             }
 
     vc = v
@@ -357,7 +386,11 @@ def _kokoro_synth(txt, vid, ls, out_path):
     for _, _, audio in pipe(txt, voice=vid, speed=speed):
         if audio is None:
             continue
-        a = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
+        a = (
+            audio.detach().cpu().numpy()
+            if hasattr(audio, "detach")
+            else np.asarray(audio)
+        )
         chunks.append(a)
 
     if not chunks:

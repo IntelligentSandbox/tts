@@ -90,7 +90,7 @@ def parse_sfx_tags(text):
     last_end = 0
 
     for m in _sfx_re.finditer(text):
-        before = text[last_end:m.start()].strip()
+        before = text[last_end : m.start()].strip()
 
         if before:
             parts.append({"text": before})

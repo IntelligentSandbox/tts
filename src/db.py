@@ -68,15 +68,17 @@ def list_tokens():
     out = []
 
     for r in rows:
-        out.append({
-            "jti": r["jti"],
-            "roles": json.loads(r["roles"]),
-            "expires": r["expires"],
-            "created_by": r["created_by"],
-            "created_at": r["created_at"],
-            "revoked": bool(r["revoked"]),
-            "note": r["note"],
-        })
+        out.append(
+            {
+                "jti": r["jti"],
+                "roles": json.loads(r["roles"]),
+                "expires": r["expires"],
+                "created_by": r["created_by"],
+                "created_at": r["created_at"],
+                "revoked": bool(r["revoked"]),
+                "note": r["note"],
+            }
+        )
 
     return out
 
@@ -100,7 +102,9 @@ def revoke_token_prefix(prefix):
 def insert_embed(embed_id, jti, created_at, note="", origin=None):
     """Insert an embed."""
     c = _conn.cursor()
-    c.execute(_schema("insert_embed.sql"), (embed_id, jti, int(created_at), note, origin))
+    c.execute(
+        _schema("insert_embed.sql"), (embed_id, jti, int(created_at), note, origin)
+    )
     _conn.commit()
 
 
@@ -136,12 +140,14 @@ def list_embeds():
     out = []
 
     for r in rows:
-        out.append({
-            "embed_id": r["embed_id"],
-            "jti": r["jti"],
-            "created_at": r["created_at"],
-            "note": r["note"],
-            "origin": r["origin"],
-        })
+        out.append(
+            {
+                "embed_id": r["embed_id"],
+                "jti": r["jti"],
+                "created_at": r["created_at"],
+                "note": r["note"],
+                "origin": r["origin"],
+            }
+        )
 
     return out

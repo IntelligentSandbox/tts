@@ -235,7 +235,7 @@ def make_app(cfg, config_path: str | None = None):
             b, m = eng._concat_wavs(segs, fmt=fmt, bitrate=j.get("bitrate"))
             rid = uuid.uuid4().hex[:8]
             h = {
-                "Content-Disposition": f'inline; filename="batch-{rid}.{"mp3" if m=="audio/mpeg" else "wav"}"',
+                "Content-Disposition": f'inline; filename="batch-{rid}.{"mp3" if m == "audio/mpeg" else "wav"}"',
                 "Cache-Control": "no-store",
             }
             return Response(content=b, media_type=m, headers=h)
