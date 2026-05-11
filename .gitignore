@@ -1,8 +1,9 @@
-src/tts-venv
-src/private/
 __pycache__/
-dataset/
-.42c/
-**/*.log
-voices/*
-./public/
+.pytest_cache/
+src/tts-venv/
+src/private/
+src/public/
+src/*.log
+tts-error.log
+voices/*.onnx
+voices/*.onnx.json
