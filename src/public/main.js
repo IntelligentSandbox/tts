@@ -32,6 +32,8 @@ async function getPanelStatus() {
   }`;
   const canTts = !!(s.admin || s.mod || s.tts);
   byId("submit").disabled = !canTts;
+  const tb = byId("test");
+  if (tb) tb.disabled = !canTts;
   byId("alias_admin").style.display = s.admin ? "block" : "none";
   const ta = byId("token_admin");
   if (ta) ta.style.display = s.admin ? "block" : "none";
@@ -153,9 +155,11 @@ function parseParts(input, fallbackVoice) {
   }
 
   while ((m = reVoice.exec(input)) !== null) {
+    const tok = m[2].toLowerCase();
+    if (!ALIAS_SET || !ALIAS_SET.has(tok)) continue;
     const segStart = m.index + m[1].length;
     if (segStart > i) pushText(input.slice(i, segStart));
-    curVoice = m[2].toLowerCase();
+    curVoice = tok;
     i = reVoice.lastIndex;
   }
   pushText(input.slice(i));
@@ -183,7 +187,7 @@ async function playText(fullText, fallbackVoice, statusEl) {
           parts: parts.map((p) =>
             p.type === "sfx"
               ? { sfx: p.name }
-              : { text: p.text, voice: p.voice || null }
+              : { text: p.text, voice: p.voice || null },
           ),
           format: "mp3",
           preset: byId("preset")?.value || null,
@@ -293,6 +297,23 @@ document.addEventListener("click", async (e) => {
         if (!t || byId("submit").disabled) return;
         await addRow(t, v, null);
         byId("tts").value = "";
+        byId("tts").focus();
+        break;
+      }
+      case "test-phrase": {
+        if (byId("test").disabled) return;
+        const phrases = [
+          "It's 8:30 p.m. and I just paid $12.50 for dinner.",
+          "Meeting starts at 9 a.m. on Monday, March 3rd.",
+          "I bought 2 coffees for $4.75 each at the cafe.",
+          "The flight leaves at 6:45 a.m. from gate 23.",
+          "Dr. Smith called me at 3 p.m. about the appointment on Friday.",
+          "There are 1,234 people watching right now, that's wild.",
+          "The temperature dropped to 32 degrees overnight.",
+          "I'll be back in 15 minutes, around 7:20 p.m.",
+        ];
+        const pick = phrases[Math.floor(Math.random() * phrases.length)];
+        byId("tts").value = pick;
         byId("tts").focus();
         break;
       }
