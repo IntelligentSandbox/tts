@@ -1,0 +1,23 @@
+[project]
+name = "tts"
+version = "0.1.0"
+description = "TTS service - Voice generation using Piper TTS"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "pyyaml>=6.0.0",
+    "itsdangerous>=2.2.0",
+    "piper-tts>=1.2.0",
+    "jupyter>=1.1.0",
+    "openai-whisper>=20240930",
+    "pyjwt>=2.9.0",
+    "requests>=2.32.0",
+    "cachetools>=5.5.0",
+    "kokoro>=0.9.4",
+    "soundfile>=0.13.0",
+    "pedalboard>=0.9.22",
+]
+
+[tool.uv]
+package = false
