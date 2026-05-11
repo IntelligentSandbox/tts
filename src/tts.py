@@ -37,7 +37,7 @@ DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 
 # Built-in kokoro voices (downloaded on demand from HF by the kokoro package).
 # Prefix encodes (a)merican/(b)ritish + (f)emale/(m)ale.
-# TODO support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
+# TODO(6adf): support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
 # can pre-cache the full set (avoid first-call HF download) or drop custom voices.
 KOKORO_VOICES = [
     "af_alloy",

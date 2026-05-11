@@ -1,1 +1,0 @@
-{"id": "89b0", "title": "re-sync packages if requirements.txt changes after venv is created", "status": "open", "priority": "low", "tags": [], "created_at": "2026-05-11 15:12:01.971557", "updated_at": "2026-05-11 15:12:01.971557", "source": "setup.py:9", "depends": [], "blocks": [], "assignee": null}
