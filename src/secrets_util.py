@@ -43,7 +43,11 @@ def _resolve(p, base_dir=None):
         return p
 
     if base_dir:
-        base = os.path.normpath(os.path.join(_CFG_DIR, base_dir)) if not os.path.isabs(base_dir) else base_dir
+        base = (
+            os.path.normpath(os.path.join(_CFG_DIR, base_dir))
+            if not os.path.isabs(base_dir)
+            else base_dir
+        )
         return os.path.normpath(os.path.join(base, p))
 
     return os.path.normpath(os.path.join(_CFG_DIR, p))
