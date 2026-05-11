@@ -762,6 +762,7 @@ def make_app(cfg, config_path: str | None = None):
         return {"in": tx, "out": tx2, "flags": flags}
 
     app.include_router(r)
-    if os.path.isdir("public"):
-        app.mount("/", StaticFiles(directory="public", html=True), name="ui")
+    public_dir = os.path.join(os.path.dirname(__file__), "public")
+    if os.path.isdir(public_dir):
+        app.mount("/", StaticFiles(directory=public_dir, html=True), name="ui")
     return app
