@@ -17,3 +17,6 @@ if not os.path.isfile("private/config.yaml"):
 
 if not os.path.isfile("private/mod_blocklist.txt"):
     shutil.copyfile("templates/mod_blocklist.txt.example", "private/mod_blocklist.txt")
+
+if not os.path.isfile("private/secrets.yaml"):
+    shutil.copyfile("templates/secrets.yaml.example", "private/secrets.yaml")
