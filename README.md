@@ -1,6 +1,6 @@
-# Piper TTS
+# TTS
 
-Piper TTS is a FastAPI-based library for local, high-speed neural text-to-speech synthesis.
+A FastAPI-based service for local, high-speed neural text-to-speech synthesis. Supports Piper and Kokoro backends.
 
 https://github.com/user-attachments/assets/d545fa6f-5a4f-4dc7-8460-3a5d0ab15ff1
 

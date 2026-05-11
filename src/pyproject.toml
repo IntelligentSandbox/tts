@@ -1,7 +1,7 @@
 [project]
 name = "tts"
 version = "0.1.0"
-description = "TTS service - Voice generation using Piper TTS"
+description = "TTS service - Voice generation with Piper and Kokoro backends"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
