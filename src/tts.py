@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import threading
 import hmac
+import wave
 from collections import OrderedDict
 from log import configure, logger
 from cachetools import TTLCache
@@ -17,6 +18,7 @@ from cachetools import TTLCache
 import secrets_util as sec
 import sfx
 import mod
+import voice_fx
 from util import resolve_path
 
 cfg = {}
@@ -32,6 +34,38 @@ _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
 
 DEFAULT_VOICES = os.path.join(os.path.dirname(__file__), "..", "voices")
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
+
+# Built-in kokoro voices (downloaded on demand from HF by the kokoro package).
+# Prefix encodes (a)merican/(b)ritish + (f)emale/(m)ale.
+# TODO: support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
+# can pre-cache the full set (avoid first-call HF download) or drop custom voices.
+KOKORO_VOICES = [
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
+    "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+    "am_michael", "am_onyx", "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+]
+KOKORO_SR = 24000
+
+_kokoro_pipelines = {}
+_kokoro_lock = threading.Lock()
+
+
+def _backend():
+    return (cfg.get("backend", "piper") or "piper").strip().lower()
+
+
+def _kokoro_pipeline(voice_id):
+    lang = "b" if voice_id.startswith("b") else "a"
+    with _kokoro_lock:
+        p = _kokoro_pipelines.get(lang)
+        if p is None:
+            from kokoro import KPipeline
+            p = KPipeline(lang_code=lang)
+            _kokoro_pipelines[lang] = p
+        return p
 
 
 def init(c, base_dir: str | None = None):
@@ -52,6 +86,7 @@ def init(c, base_dir: str | None = None):
     aliases = dict(cfg.get("aliases", {}))
     presets = dict(cfg.get("presets", {}))
     mod.init_moderator(cfg, base_dir=base_dir)
+    voice_fx.init(cfg)
     a = cfg.get("auth") or {}
     if a.get("enabled"):
         _auth = {"enabled": True, "keys": sec.ensure_keys(a, base_dir=base_dir)}
@@ -90,29 +125,45 @@ def auth_ok(role, key):
 def _scan():
     global scanned, vc
     v = {}
-    p = cfg.get("voices_dir", DEFAULT_VOICES)
+    base = cfg.get("voices_dir", DEFAULT_VOICES)
+    b = _backend()
 
-    for j in glob.glob(os.path.join(p, "**", "*.onnx.json"), recursive=True):
-        m = j[:-5]
-        if not os.path.exists(m):
-            continue
+    if b == "kokoro":
+        for name in KOKORO_VOICES:
+            v[name] = {
+                "id": name,
+                "backend": "kokoro",
+                "model_path": None,
+                "config_path": None,
+                "sample_rate": KOKORO_SR,
+                "speakers": 1,
+                "language": "en-gb" if name.startswith("b") else "en-us",
+            }
+    else:
+        p = os.path.join(base, "piper") if os.path.isdir(os.path.join(base, "piper")) else base
 
-        i = os.path.splitext(os.path.basename(m))[0]
-        try:
-            meta = json.load(open(j, "r", encoding="utf-8"))
-        except:
-            meta = {}
+        for j in glob.glob(os.path.join(p, "**", "*.onnx.json"), recursive=True):
+            m = j[:-5]
+            if not os.path.exists(m):
+                continue
 
-        v[i] = {
-            "id": i,
-            "model_path": m,
-            "config_path": j,
-            "sample_rate": meta.get(
-                "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
-            ),
-            "speakers": len(meta.get("speakers", [0])),
-            "language": meta.get("language", meta.get("espeak", {}).get("voice", "")),
-        }
+            i = os.path.splitext(os.path.basename(m))[0]
+            try:
+                meta = json.load(open(j, "r", encoding="utf-8"))
+            except:
+                meta = {}
+
+            v[i] = {
+                "id": i,
+                "backend": "piper",
+                "model_path": m,
+                "config_path": j,
+                "sample_rate": meta.get(
+                    "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
+                ),
+                "speakers": len(meta.get("speakers", [0])),
+                "language": meta.get("language", meta.get("espeak", {}).get("voice", "")),
+            }
 
     vc = v
     scanned = True
@@ -296,10 +347,31 @@ def _mp3(w, br):
     return b
 
 
+def _kokoro_synth(txt, vid, ls, out_path):
+    import numpy as np
+    import soundfile as sf
+
+    pipe = _kokoro_pipeline(vid)
+    speed = 1.0 / float(ls) if ls else 1.0
+    chunks = []
+    for _, _, audio in pipe(txt, voice=vid, speed=speed):
+        if audio is None:
+            continue
+        a = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
+        chunks.append(a)
+
+    if not chunks:
+        raise RuntimeError("kokoro produced no audio")
+
+    full = np.concatenate(chunks).astype(np.float32)
+    sf.write(out_path, full, KOKORO_SR, subtype="PCM_16")
+
+
 def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     info = _vinfo(vid)
+    is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not _which(cfg.get("piper_bin", "piper")):
+    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
         raise RuntimeError("piper not found")
 
     tf = tempfile.NamedTemporaryFile(
@@ -314,16 +386,24 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     rm = [tf.name, of.name]
 
     try:
-        c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
+        if is_kokoro:
+            with sem:
+                _kokoro_synth(txt, vid, ls, of.name)
+        else:
+            c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
 
-        with sem:
-            r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with sem:
+                r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        if r.returncode != 0 or not os.path.exists(of.name):
-            raise RuntimeError("piper failed")
+            if r.returncode != 0 or not os.path.exists(of.name):
+                raise RuntimeError("piper failed")
 
-        src = _norm(of.name) if norm else of.name
-        if src != of.name:
+        fx = voice_fx.process_wav(of.name, voice_id=vid)
+        if fx != of.name:
+            rm.append(fx)
+
+        src = _norm(fx) if norm else fx
+        if src != fx:
             rm.append(src)
 
         if fmt == "mp3":
@@ -569,6 +649,7 @@ def _tts_with_sfx(
 def health():
     return {
         "ok": True,
+        "backend": _backend(),
         "piper": _which(cfg.get("piper_bin", "piper")) or None,
         "ffmpeg": _which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
@@ -615,8 +696,9 @@ def del_alias(n):
 
 def _synth_wav_to_path(text, vid, ls, ns, nw, ss, spk):
     info = _vinfo(vid) if vid in vc else _vinfo(_default_voice_id())
+    is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not _which(cfg.get("piper_bin", "piper")):
+    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
         raise RuntimeError("piper not found")
 
     tf = tempfile.NamedTemporaryFile(
@@ -628,11 +710,13 @@ def _synth_wav_to_path(text, vid, ls, ns, nw, ss, spk):
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
 
-    c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
-    r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    if r.returncode != 0 or not os.path.exists(of.name):
-        raise RuntimeError("piper failed")
+    if is_kokoro:
+        _kokoro_synth(text, vid, ls, of.name)
+    else:
+        c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
+        r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if r.returncode != 0 or not os.path.exists(of.name):
+            raise RuntimeError("piper failed")
 
     return tf.name, of.name
 
@@ -669,8 +753,9 @@ def _resample_to_uniform(wav_in, sr):
 
 def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     info = _vinfo(vid) or vc[_default_voice_id()]
+    is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not _which(cfg.get("piper_bin", "piper")):
+    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
         raise RuntimeError("piper not found")
 
     tf = tempfile.NamedTemporaryFile(
@@ -682,18 +767,28 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
 
-    c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
-
     try:
-        with sem:
-            r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if is_kokoro:
+            with sem:
+                _kokoro_synth(txt, vid, ls, of.name)
+        else:
+            c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
+            with sem:
+                r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        if r.returncode != 0 or not os.path.exists(of.name):
-            raise RuntimeError("piper failed")
+            if r.returncode != 0 or not os.path.exists(of.name):
+                raise RuntimeError("piper failed")
 
-        src = _norm(of.name) if norm else of.name
+        fx = voice_fx.process_wav(of.name, voice_id=vid)
+        src = _norm(fx) if norm else fx
 
-        return src, [tf.name, of.name] + ([] if src == of.name else [src])
+        extra = []
+        if fx != of.name:
+            extra.append(fx)
+        if src != fx:
+            extra.append(src)
+
+        return src, [tf.name, of.name] + extra
 
     except:
         for p in [tf.name, of.name]:
