@@ -6,6 +6,7 @@ src/public/
 src/*.log
 src/data/
 tts-error.log
+data/
 voices/*.onnx
 voices/*.onnx.json
 voices/piper/

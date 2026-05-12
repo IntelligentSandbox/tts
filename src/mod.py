@@ -20,7 +20,7 @@ _leet = {
 
 _emoji = set()
 
-# TODO(b405): https://unicode.org/reports/tr51/tr51-12.html#Identification
+# TODO(393e): https://unicode.org/reports/tr51/tr51-12.html#Identification
 with open(
     os.path.join(os.path.dirname(__file__), "assets", "emoji-data.txt"),
     encoding="utf-8",
