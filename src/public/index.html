@@ -1,114 +1,115 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>tts panel</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
 
-<head>
-  <meta charset="UTF-8">
-  <title>tts panel</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-
-<body>
-  <h1 style="display: inline;">TTS Panel</h1>
-  <div id="auth">
-    <input id="key_admin" type="password" autocomplete="off" placeholder="admin key" />
-    <button id="login_admin" data-action="login-admin">login admin</button>
-    <button id="login_oauth" data-action="login-oauth" style="margin-left:8px;">login w/ oauth</button>
-    <button id="logout" data-action="logout">logout</button>
-    <small id="auth_status">not logged in</small>
-  </div>
-
-  <div id="row">
-    <label for="voices">voice/alias</label>
-    <select id="voices"></select>
-    <button id="refresh" data-action="refresh">refresh</button>
-    <div id="toggles">
-      <label><input type="checkbox" id="autoplay" data-action="toggle-autoplay"> autoplay</label>
-      <label><input type="checkbox" id="pollq" data-action="toggle-poll"> queue poll (live)</label>
+  <body>
+    <h1>TTS Panel</h1>
+    <div id="auth">
+      <input id="key_admin" type="password" autocomplete="off" placeholder="admin key" />
+      <button id="login_admin" data-action="login-admin">login admin</button>
+      <button id="login_oauth" data-action="login-oauth" style="margin-left: 8px">login w/ oauth</button>
+      <button id="logout" data-action="logout">logout</button>
+      <small id="auth_status">not logged in</small>
     </div>
-  </div>
 
-  <div id="alias_admin" style="display:none; margin:10px 0;">
-    <span class="badge">add alias (admin)</span>
-    <input id="alias_name" placeholder="alias name (e.g. brian)" /> →
-    <select id="alias_target"></select>
-    <button id="alias_add" data-action="alias-add">add alias</button>
-  </div>
-
-
-  <div id="row2">
-    <label>preset</label>
-    <select id="preset">
-      <option value="">(none)</option>
-      <option>fast</option>
-      <option>slow</option>
-      <option>news</option>
-      <option>narration</option>
-    </select>
-    <label>length_scale</label><input id="length_scale" type="number" step="0.01" min="0.5" max="2"
-      placeholder="auto" />
-    <label>noise_w</label><input id="noise_w" type="number" step="0.01" min="0" max="2" placeholder="auto" />
-    <label>sent_silence</label><input id="sentence_silence" type="number" step="0.01" min="0" max="1"
-      placeholder="auto" />
-    <label>speaker_id</label><input id="speaker_id" type="number" min="0" step="1" placeholder="auto" />
-  </div>
-
-  <form id="form">
-    <label for="tts">message</label>
-    <textarea id="tts" rows="5" cols="90" placeholder="brian: hello or [fast] hello"></textarea>
-    <div>
-      <button id="submit" data-action="submit-text" type="button" disabled>add</button>
-      <button id="test" data-action="test-phrase" type="button" disabled title="fill with a stress-test phrase">test</button>
+    <div id="row">
+      <label for="voices">voice/alias</label>
+      <select id="voices"></select>
+      <button id="refresh" data-action="refresh">refresh</button>
+      <div id="toggles">
+        <label><input type="checkbox" id="autoplay" data-action="toggle-autoplay" /> autoplay</label>
+        <label><input type="checkbox" id="pollq" data-action="toggle-poll" /> queue poll (live)</label>
+      </div>
     </div>
-  </form>
 
-  <div id="token_admin" style="display:none; margin:10px 0;">
-    <span class="badge">overlay token (admin)</span>
-    <input id="token_ttl" type="number" value="3600" style="width:6rem;" />
-    <input id="token_origin" type="text" placeholder="optional origin (https://example.com)"
-      style="width:18rem; margin-left:8px;" />
-    <select id="token_roles">
-      <option value='["tts","pull"]'>tts+pull (overlay)</option>
-      <option value='["tts"]'>tts only (bot)</option>
-      <option value='["pull"]'>pull only (overlay)</option>
-    </select>
-    <button id="mint_token" data-action="mint-token">mint</button>
-    <div id="mint_result" style="margin-top:6px"></div>
-  </div>
+    <div id="alias_admin" style="display: none; margin: 10px 0">
+      <span class="badge">add alias (admin)</span>
+      <input id="alias_name" placeholder="alias name (e.g. brian)" /> →
+      <select id="alias_target"></select>
+      <button id="alias_add" data-action="alias-add">add alias</button>
+    </div>
 
-  <div id="oauth_admin" style="display:none; margin:10px 0;">
-    <span class="badge">oauth mappings (admin)</span>
-    <label>provider</label>
-    <select id="map_provider">
-      <option value="twitch">twitch</option>
-    </select>
-    <label>id</label>
-    <input id="map_remote" placeholder="twitch id or login" />
-    <label>role</label>
-    <select id="map_role">
-      <option value="admin">admin</option>
-      <option value="mod">mod</option>
-    </select>
-    <button id="map_add">add mapping</button>
-    <button id="oauth_refresh" data-action="oauth-refresh">fetch</button>
-  </div>
-  <div id="oauth_whoami" style="margin-top:6px;"></div>
-  </div>
+    <div id="row2">
+      <label>preset</label>
+      <select id="preset">
+        <option value="">(none)</option>
+        <option>fast</option>
+        <option>slow</option>
+        <option>news</option>
+        <option>narration</option>
+      </select>
+      <label>length_scale</label
+      ><input id="length_scale" type="number" step="0.01" min="0.5" max="2" placeholder="auto" /> <label>noise_w</label
+      ><input id="noise_w" type="number" step="0.01" min="0" max="2" placeholder="auto" /> <label>sent_silence</label
+      ><input id="sentence_silence" type="number" step="0.01" min="0" max="1" placeholder="auto" />
+      <label>speaker_id</label><input id="speaker_id" type="number" min="0" step="1" placeholder="auto" />
+    </div>
 
-  <audio id="player" controls></audio>
+    <form id="form">
+      <label for="tts">message</label>
+      <textarea id="tts" rows="5" cols="90" placeholder="brian: hello or [fast] hello"></textarea>
+      <div>
+        <button id="submit" data-action="submit-text" type="button" disabled>add</button>
+        <button id="test" data-action="test-phrase" type="button" disabled title="fill with a stress-test phrase">
+          test
+        </button>
+      </div>
+    </form>
 
-  <table aria-label="tts messages">
-    <thead>
-      <tr>
-        <th style="width:6rem;">time</th>
-        <th>text</th>
-        <th style="width:12rem;">voice/preset</th>
-        <th style="width:7rem;">status</th>
-        <th style="width:10rem;">actions</th>
-      </tr>
-    </thead>
-    <tbody id="list"></tbody>
-  </table>
-  <script type="module" src="main.js"></script>
-</body>
+    <div id="token_admin" style="display: none; margin: 10px 0">
+      <span class="badge">overlay token (admin)</span>
+      <input id="token_ttl" type="number" value="3600" style="width: 6rem" />
+      <input
+        id="token_origin"
+        type="text"
+        placeholder="optional origin (https://example.com)"
+        style="width: 18rem; margin-left: 8px"
+      />
+      <select id="token_roles">
+        <option value='["tts","pull"]'>tts+pull (overlay)</option>
+        <option value='["tts"]'>tts only (bot)</option>
+        <option value='["pull"]'>pull only (overlay)</option>
+      </select>
+      <button id="mint_token" data-action="mint-token">mint</button>
+      <div id="mint_result" style="margin-top: 6px"></div>
+    </div>
 
+    <div id="oauth_admin" style="display: none; margin: 10px 0">
+      <span class="badge">oauth mappings (admin)</span>
+      <label>provider</label>
+      <select id="map_provider">
+        <option value="twitch">twitch</option>
+      </select>
+      <label>id</label>
+      <input id="map_remote" placeholder="twitch id or login" />
+      <label>role</label>
+      <select id="map_role">
+        <option value="admin">admin</option>
+        <option value="mod">mod</option>
+      </select>
+      <button id="map_add">add mapping</button>
+      <button id="oauth_refresh" data-action="oauth-refresh">fetch</button>
+    </div>
+    <div id="oauth_whoami" style="margin-top: 6px"></div>
+
+    <audio id="player" controls></audio>
+
+    <table aria-label="tts messages">
+      <thead>
+        <tr>
+          <th style="width: 6rem">time</th>
+          <th>text</th>
+          <th style="width: 12rem">voice/preset</th>
+          <th style="width: 7rem">status</th>
+          <th style="width: 10rem">actions</th>
+        </tr>
+      </thead>
+      <tbody id="list"></tbody>
+    </table>
+    <script type="module" src="main.js"></script>
+  </body>
 </html>

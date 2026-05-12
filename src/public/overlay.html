@@ -1,68 +1,71 @@
 <!doctype html>
 <html>
-<meta charset="utf-8">
-<title>overlay</title>
-<style>
-  html,
-  body {
-    margin: 0;
-    background:
-      transparent
-  }
-</style>
-<script>
-  // TODO: add this to overlay api.
-  // Polls the server for queued TTS jobs / request synthesis / plays audio
-  (function () {
-    const q = new URLSearchParams(location.search);
-    const key = q.get('key') || '';
-    const keyPull = q.get('key_pull') || key;
-    const keyTts = q.get('key_tts') || key;
-    const defVoice = q.get('voice') || '';
-    const defPreset = q.get('preset') || '';
-    const poll = Math.max(200, parseInt(q.get('poll') || '400', 10));
-
-    const hdrPull = keyPull ? { 'X-API-Key': keyPull } : {};
-    const hdrTts = Object.assign({ 'Content-Type': 'application/json' }, keyTts ? { 'X-API-Key': keyTts } : {});
-
-    const a = new Audio(); a.autoplay = true;
-
-    async function play(body) {
-      try {
-        const r = await fetch('/api/tts', { method: 'POST', headers: hdrTts, body: JSON.stringify(body) });
-        if (!r.ok) return;
-        const b = await r.blob();
-        a.src = URL.createObjectURL(b);
-        try { await a.play(); } catch (_) { }
-      } catch (_) { }
+  <meta charset="utf-8" />
+  <title>overlay</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      background: transparent;
     }
+  </style>
+  <script>
+    // TODO: add this to overlay api.
+    // Polls the server for queued TTS jobs / request synthesis / plays audio
+    ;(function () {
+      const q = new URLSearchParams(location.search)
+      const key = q.get('key') || ''
+      const keyPull = q.get('key_pull') || key
+      const keyTts = q.get('key_tts') || key
+      const defVoice = q.get('voice') || ''
+      const defPreset = q.get('preset') || ''
+      const poll = Math.max(200, parseInt(q.get('poll') || '400', 10))
 
-    const forceVoice = q.get('force_voice') === '1';
-    const forcePreset = q.get('force_preset') === '1';
-    function mergeDefaults(job) {
-      if (defVoice && (forceVoice || !job.voice)) job.voice = defVoice;
-      if (defPreset && (forcePreset || !job.preset)) job.preset = defPreset;
-      return job;
-    }
+      const hdrPull = keyPull ? { 'X-API-Key': keyPull } : {}
+      const hdrTts = Object.assign({ 'Content-Type': 'application/json' }, keyTts ? { 'X-API-Key': keyTts } : {})
 
+      const a = new Audio()
+      a.autoplay = true
 
-    function loop(delay) {
-      setTimeout(async () => {
+      async function play(body) {
         try {
-          const r = await fetch('/api/pull', { headers: hdrPull });
-          if (r.status === 200) {
-            const job = mergeDefaults(await r.json());
-            await play(job);
-            loop(poll);
-            return;
-          }
-          if (r.status === 204) { loop(poll); return; }
-        } catch (_) { }
-        loop(Math.min(4000, delay * 2)); // simple backoff on errors
-      }, delay);
-    }
-    loop(poll);
-  })();
-</script>
+          const r = await fetch('/api/tts', { method: 'POST', headers: hdrTts, body: JSON.stringify(body) })
+          if (!r.ok) return
+          const b = await r.blob()
+          a.src = URL.createObjectURL(b)
+          try {
+            await a.play()
+          } catch (_) {}
+        } catch (_) {}
+      }
 
+      const forceVoice = q.get('force_voice') === '1'
+      const forcePreset = q.get('force_preset') === '1'
+      function mergeDefaults(job) {
+        if (defVoice && (forceVoice || !job.voice)) job.voice = defVoice
+        if (defPreset && (forcePreset || !job.preset)) job.preset = defPreset
+        return job
+      }
+
+      function loop(delay) {
+        setTimeout(async () => {
+          try {
+            const r = await fetch('/api/pull', { headers: hdrPull })
+            if (r.status === 200) {
+              const job = mergeDefaults(await r.json())
+              await play(job)
+              loop(poll)
+              return
+            }
+            if (r.status === 204) {
+              loop(poll)
+              return
+            }
+          } catch (_) {}
+          loop(Math.min(4000, delay * 2)) // simple backoff on errors
+        }, delay)
+      }
+      loop(poll)
+    })()
+  </script>
 </html>

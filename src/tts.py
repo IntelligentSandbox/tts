@@ -4,15 +4,12 @@ import json
 import re
 import time
 import uuid
-import shlex
 import shutil
 import tempfile
 import subprocess
 import threading
 import hmac
-import wave
-from collections import OrderedDict
-from log import configure, logger
+from log import logger
 from cachetools import TTLCache
 
 import secrets_util as sec
@@ -177,7 +174,7 @@ def _scan():
             i = os.path.splitext(os.path.basename(m))[0]
             try:
                 meta = json.load(open(j, "r", encoding="utf-8"))
-            except:
+            except Exception:
                 meta = {}
 
             v[i] = {
@@ -370,7 +367,7 @@ def _mp3(w, br):
 
     try:
         os.remove(m)
-    except:
+    except Exception:
         pass
 
     return b
@@ -456,7 +453,7 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
         for p in rm:
             try:
                 os.remove(p)
-            except:
+            except Exception:
                 pass
 
     if not b or len(b) <= 44:
@@ -675,7 +672,7 @@ def _tts_with_sfx(
         for pth in rm:
             try:
                 os.remove(pth)
-            except:
+            except Exception:
                 pass
 
 
@@ -827,7 +824,7 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
         for p in [tf.name, of.name]:
             try:
                 os.remove(p)
-            except:
+            except Exception:
                 pass
         raise
 
@@ -913,7 +910,7 @@ def _concat_wavs(paths, fmt="mp3", bitrate=None):
 
     try:
         os.remove(merged_wav.name)
-    except:
+    except Exception:
         pass
 
     if mp3:

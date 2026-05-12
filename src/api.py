@@ -243,7 +243,7 @@ def make_app(cfg, config_path: str | None = None):
             for pth in rm:
                 try:
                     os.remove(pth)
-                except:
+                except Exception:
                     pass
 
     @r.get("/peek", dependencies=[need("mod")])
@@ -656,8 +656,6 @@ def make_app(cfg, config_path: str | None = None):
         jti = uuid.uuid4().hex
         now = int(time.time())
         exp = now + ttl
-        payload = {"iss": "tts", "iat": now, "exp": exp, "jti": jti, "roles": roles}
-        token = jwt.encode(payload, req.app.state.jwt_secret, algorithm="HS256")
         db.insert_token(jti, roles, exp, "admin", now, note)
         # generate a longer unpredictable embed id
         embed_id = secrets.token_urlsafe(18)

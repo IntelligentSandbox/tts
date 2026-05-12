@@ -1,8 +1,6 @@
 import os
 import re
-import glob
 
-from log import logger
 
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 SFX_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a")

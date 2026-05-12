@@ -1,3 +1,7 @@
+h1 {
+  display: inline;
+}
+
 body {
   font-family: system-ui, sans-serif;
   margin: 16px;
@@ -24,7 +28,7 @@ body {
   max-width: 20rem;
 }
 
-input[type="number"] {
+input[type='number'] {
   width: 6rem;
 }
 
