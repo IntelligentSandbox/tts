@@ -8,7 +8,7 @@ content = ""
 b = Path(input("Absolute path to block list: "))
 p = b.parents[0]
 with b.open() as f:
-    for l in f:
+    for l in f:  # noqa: E741
         content += re.sub(r"\W+", "", l) + "\n"
 p = Path(p)
 p.mkdir(parents=True, exist_ok=True)
