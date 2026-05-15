@@ -2,31 +2,36 @@
 
 import os
 import tempfile
+
 from log import logger
+from pedalboard import (
+    Bitcrush,
+    Chorus,
+    Compressor,
+    Delay,
+    Distortion,
+    Gain,
+    HighpassFilter,
+    LowpassFilter,
+    Pedalboard,
+    PitchShift,
+    Reverb,
+)
+from pedalboard.io import AudioFile
 
 _cfg = {}
 _default_board = None
 _voice_boards = {}
-_available = None
 
 
 def init(cfg):
-    global _cfg, _default_board, _voice_boards, _available
+    global _cfg, _default_board, _voice_boards
     _cfg = cfg.get("voice_fx") or {}
     _default_board = None
     _voice_boards = {}
 
     if not _cfg.get("enabled"):
         logger.info("[voice_fx] disabled")
-        return
-
-    try:
-        import pedalboard  # noqa: F401
-
-        _available = True
-    except ImportError:
-        _available = False
-        logger.warning("[voice_fx] pedalboard not installed; effects disabled")
         return
 
     _default_board = _build(_cfg.get("chain") or [])
@@ -39,20 +44,6 @@ def init(cfg):
 
 
 def _build(chain_cfg):
-    from pedalboard import (
-        Pedalboard,
-        PitchShift,
-        Bitcrush,
-        Chorus,
-        Reverb,
-        Gain,
-        HighpassFilter,
-        LowpassFilter,
-        Distortion,
-        Delay,
-        Compressor,
-    )
-
     kinds = {
         "pitch_shift": PitchShift,
         "bitcrush": Bitcrush,
@@ -81,7 +72,7 @@ def _build(chain_cfg):
 
 
 def enabled():
-    return bool(_cfg.get("enabled")) and _available and _default_board is not None
+    return bool(_cfg.get("enabled")) and _default_board is not None
 
 
 def process_wav(in_path, voice_id=None):
@@ -96,8 +87,6 @@ def process_wav(in_path, voice_id=None):
     out = tempfile.NamedTemporaryFile(suffix=".fx.wav", delete=False)
     out.close()
     try:
-        from pedalboard.io import AudioFile
-
         with AudioFile(in_path) as f:
             sr = f.samplerate
             audio = f.read(f.frames)
