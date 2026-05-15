@@ -724,63 +724,6 @@ def del_alias(n):
     aliases.pop(n, None)
 
 
-def _synth_wav_to_path(text, vid, ls, ns, nw, ss, spk):
-    info = _vinfo(vid) if vid in vc else _vinfo(_default_voice_id())
-    is_kokoro = (info or {}).get("backend") == "kokoro"
-
-    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
-        raise RuntimeError("piper not found")
-
-    tf = tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".txt", delete=False
-    )
-    tf.write(text + "\n")
-    tf.close()
-
-    of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    of.close()
-
-    if is_kokoro:
-        _kokoro_synth(text, vid, ls, of.name)
-    else:
-        c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
-        r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if r.returncode != 0 or not os.path.exists(of.name):
-            raise RuntimeError("piper failed")
-
-    return tf.name, of.name
-
-
-def _resample_to_uniform(wav_in, sr):
-    f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
-
-    if not f:
-        return wav_in
-
-    out = wav_in + f".{sr}.u.wav"
-    r = subprocess.run(
-        [
-            f,
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            wav_in,
-            "-ar",
-            str(sr),
-            "-ac",
-            "1",
-            "-c:a",
-            "pcm_s16le",
-            out,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-
-    return out if r.returncode == 0 and os.path.exists(out) else wav_in
-
-
 def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     info = _vinfo(vid) or vc[_default_voice_id()]
     is_kokoro = (info or {}).get("backend") == "kokoro"
@@ -829,6 +772,7 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
         raise
 
 
+# TODO(4770): consider making sample rate configurable
 def _to_48k_mono_wav(inp):
     f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
