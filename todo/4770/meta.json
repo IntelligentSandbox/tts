@@ -1,0 +1,1 @@
+{"id": "4770", "title": "consider making sample rate configurable", "status": "open", "priority": "low", "tags": [], "created_at": "2026-05-15 01:24:00.132356", "updated_at": "2026-05-15 01:24:00.132356", "source": "src/tts.py:775", "depends": [], "blocks": [], "assignee": null}
