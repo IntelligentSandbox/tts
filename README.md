@@ -31,7 +31,7 @@ import requests
 
 # Generate speech with an API key
 response = requests.post(
-    "http://localhost:8000/api/tts",
+    "http://localhost:47100/api/tts",
     headers={"X-API-Key": "secret-key"},
     json={
         "text": "Hello! [SFX: airhorn] Welcome.",

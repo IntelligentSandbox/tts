@@ -1,7 +1,7 @@
 import os
 
 DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 8000
+DEFAULT_PORT = 47100
 
 
 def resolve_path(p, base_dir=None):
