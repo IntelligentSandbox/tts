@@ -2,15 +2,29 @@ import os
 import sqlite3
 import json
 
-SCHEMAS_DIR = os.path.join(os.path.dirname(__file__), "schemas")
+TOKENS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tokens (
+    jti TEXT PRIMARY KEY,
+    roles TEXT,
+    expires INTEGER,
+    created_by TEXT,
+    created_at INTEGER,
+    revoked INTEGER DEFAULT 0,
+    note TEXT
+)
+"""
+
+EMBEDS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS embeds (
+    embed_id TEXT PRIMARY KEY,
+    jti TEXT,
+    created_at INTEGER,
+    note TEXT,
+    origin TEXT
+)
+"""
 
 _conn = None
-
-
-def _schema(name):
-    """Read SQL schema file."""
-    with open(os.path.join(SCHEMAS_DIR, name), "r") as f:
-        return f.read()
 
 
 def init_db(path):
@@ -24,8 +38,8 @@ def init_db(path):
     _conn.row_factory = sqlite3.Row
 
     c = _conn.cursor()
-    c.execute(_schema("tokens_db.sql"))
-    c.execute(_schema("embeds_db.sql"))
+    c.execute(TOKENS_SCHEMA)
+    c.execute(EMBEDS_SCHEMA)
     _conn.commit()
 
 
@@ -36,7 +50,9 @@ def insert_token(jti, roles, expires, created_by, created_at, note=""):
 
     c = _conn.cursor()
     c.execute(
-        _schema("insert_token.sql"),
+        "INSERT OR REPLACE INTO tokens"
+        " (jti, roles, expires, created_by, created_at, revoked, note)"
+        " VALUES (?, ?, ?, ?, ?, 0, ?)",
         (jti, json.dumps(roles), int(expires), created_by, int(created_at), note),
     )
     _conn.commit()
@@ -45,7 +61,7 @@ def insert_token(jti, roles, expires, created_by, created_at, note=""):
 def get_token(jti):
     """Get a token by jti."""
     c = _conn.cursor()
-    r = c.execute(_schema("get_token.sql"), (jti,)).fetchone()
+    r = c.execute("SELECT * FROM tokens WHERE jti=?", (jti,)).fetchone()
 
     if not r:
         return None
@@ -64,7 +80,10 @@ def get_token(jti):
 def list_tokens():
     """List all tokens."""
     c = _conn.cursor()
-    rows = c.execute(_schema("list_tokens.sql")).fetchall()
+    rows = c.execute(
+        "SELECT jti, roles, expires, created_by, created_at, revoked, note"
+        " FROM tokens ORDER BY created_at DESC"
+    ).fetchall()
     out = []
 
     for r in rows:
@@ -86,7 +105,7 @@ def list_tokens():
 def revoke_token(jti):
     """Revoke a token."""
     c = _conn.cursor()
-    r = c.execute(_schema("revoke_token.sql"), (jti,))
+    r = c.execute("UPDATE tokens SET revoked=1 WHERE jti=?", (jti,))
     _conn.commit()
     return r.rowcount > 0
 
@@ -94,7 +113,7 @@ def revoke_token(jti):
 def revoke_token_prefix(prefix):
     """Revoke tokens by prefix."""
     c = _conn.cursor()
-    r = c.execute(_schema("revoke_token_prefix.sql"), (prefix + "%",))
+    r = c.execute("UPDATE tokens SET revoked=1 WHERE jti LIKE ?", (prefix + "%",))
     _conn.commit()
     return r.rowcount > 0
 
@@ -103,7 +122,9 @@ def insert_embed(embed_id, jti, created_at, note="", origin=None):
     """Insert an embed."""
     c = _conn.cursor()
     c.execute(
-        _schema("insert_embed.sql"), (embed_id, jti, int(created_at), note, origin)
+        "INSERT OR REPLACE INTO embeds (embed_id, jti, created_at, note, origin)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (embed_id, jti, int(created_at), note, origin),
     )
     _conn.commit()
 
@@ -111,7 +132,7 @@ def insert_embed(embed_id, jti, created_at, note="", origin=None):
 def get_embed(embed_id):
     """Get an embed by id."""
     c = _conn.cursor()
-    r = c.execute(_schema("get_embed.sql"), (embed_id,)).fetchone()
+    r = c.execute("SELECT * FROM embeds WHERE embed_id=?", (embed_id,)).fetchone()
 
     if not r:
         return None
@@ -128,7 +149,7 @@ def get_embed(embed_id):
 def delete_embed(embed_id):
     """Delete an embed."""
     c = _conn.cursor()
-    r = c.execute(_schema("delete_embed.sql"), (embed_id,))
+    r = c.execute("DELETE FROM embeds WHERE embed_id=?", (embed_id,))
     _conn.commit()
     return r.rowcount > 0
 
@@ -136,7 +157,10 @@ def delete_embed(embed_id):
 def list_embeds():
     """List all embeds."""
     c = _conn.cursor()
-    rows = c.execute(_schema("list_embeds.sql")).fetchall()
+    rows = c.execute(
+        "SELECT embed_id, jti, created_at, note, origin"
+        " FROM embeds ORDER BY created_at DESC"
+    ).fetchall()
     out = []
 
     for r in rows:
