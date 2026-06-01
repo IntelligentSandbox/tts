@@ -1,41 +1,46 @@
-import os
 import glob
+import hmac
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import threading
 import time
 import uuid
-import shutil
-import tempfile
-import subprocess
-import threading
-import hmac
-from log import logger
+
 from cachetools import TTLCache
 
+import mod
 import secrets_util as sec
 import sfx
-import mod
 import voice_fx
+from log import logger
 from util import resolve_path
 
-cfg = {}
-vc = {}
+cfg: dict = {}
+vc: dict = {}
 scanned = False
 sem = None
-aliases = {}
-presets = {}
+aliases: dict = {}
+presets: dict = {}
 cache = None
-_auth = {"enabled": False, "keys": {}}
+_auth: dict = {"enabled": False, "keys": {}}
 _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
+
+# trim leading and trailing silence so segments sit flush
+_SILENCE_TRIM = (
+    "silenceremove=start_periods=1:start_threshold=-50dB,"
+    "areverse,"
+    "silenceremove=start_periods=1:start_threshold=-50dB,"
+    "areverse"
+)
 
 
 DEFAULT_VOICES = os.path.join(os.path.dirname(__file__), "..", "voices")
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 
-# Built-in kokoro voices (downloaded on demand from HF by the kokoro package).
-# Prefix encodes (a)merican/(b)ritish + (f)emale/(m)ale.
-# TODO(6adf): support loading kokoro voice .pt files from <voices_dir>/kokoro/ so users
-# can pre-cache the full set (avoid first-call HF download) or drop custom voices.
 KOKORO_VOICES = [
     "af_alloy",
     "af_aoede",
@@ -68,7 +73,7 @@ KOKORO_VOICES = [
 ]
 KOKORO_SR = 24000
 
-_kokoro_pipelines = {}
+_kokoro_pipelines: dict = {}
 _kokoro_lock = threading.Lock()
 
 
@@ -78,27 +83,33 @@ def _backend():
 
 def _kokoro_pipeline(voice_id):
     lang = "b" if voice_id.startswith("b") else "a"
+
     with _kokoro_lock:
         p = _kokoro_pipelines.get(lang)
+
         if p is None:
             from kokoro import KPipeline
 
             p = KPipeline(lang_code=lang)
             _kokoro_pipelines[lang] = p
+
         return p
 
 
 def init(c, base_dir: str | None = None):
     global cfg, sem, cache, aliases, presets, _auth
     cfg = c
+
     if base_dir:
         try:
             for k in ("voices_dir", "sounds_dir"):
                 v = cfg.get(k)
+
                 if v and not os.path.isabs(v):
                     cfg[k] = resolve_path(v, base_dir)
         except Exception:
             pass
+
     sem = threading.Semaphore(int(cfg.get("max_concurrency", 2)))
     cache = TTLCache(
         maxsize=int(cfg.get("cache_size", 64)), ttl=int(cfg.get("cache_ttl_s", 300))
@@ -107,13 +118,16 @@ def init(c, base_dir: str | None = None):
     presets = dict(cfg.get("presets", {}))
     mod.init_moderator(cfg, base_dir=base_dir)
     voice_fx.init(cfg)
+
     a = cfg.get("auth") or {}
+
     if a.get("enabled"):
         _auth = {"enabled": True, "keys": sec.ensure_keys(a, base_dir=base_dir)}
         logger.info(f"[auth] enabled; roles={list(_auth['keys'].keys())}")
     else:
         _auth = {"enabled": False, "keys": {}}
         logger.info("[auth] disabled")
+
     voices()
 
 
@@ -128,10 +142,12 @@ def _role_key(role):
 def auth_ok(role, key):
     if not auth_enabled():
         return True
+
     if not key:
         return False
 
     exp = _role_key(role)
+
     if exp:
         return hmac.compare_digest(str(key), str(exp))
 
@@ -203,10 +219,13 @@ def _default_voice_id():
 
 def _resolve_voice_id(v):
     v = (v or "").strip()
+
     if v in aliases:
         v = aliases[v]
+
     if v in vc:
         return v, False
+
     return _default_voice_id(), bool(v)
 
 
@@ -224,11 +243,8 @@ def reload():
 def _vinfo(i):
     if i not in vc:
         voices()
+
     return vc.get(i)
-
-
-def _which(b):
-    return shutil.which(b)
 
 
 def _san(s):
@@ -310,7 +326,7 @@ def _norm(w):
     if not bool(cfg.get("normalize", False)):
         return w
 
-    f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
+    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
     if not f:
         return w
@@ -336,7 +352,7 @@ def _norm(w):
 
 
 def _mp3(w, br):
-    f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
+    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
     if not f:
         return b""
@@ -380,9 +396,11 @@ def _kokoro_synth(txt, vid, ls, out_path):
     pipe = _kokoro_pipeline(vid)
     speed = 1.0 / float(ls) if ls else 1.0
     chunks = []
+
     for _, _, audio in pipe(txt, voice=vid, speed=speed):
         if audio is None:
             continue
+
         a = (
             audio.detach().cpu().numpy()
             if hasattr(audio, "detach")
@@ -401,7 +419,7 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     info = _vinfo(vid)
     is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
+    if not is_kokoro and not shutil.which(cfg.get("piper_bin", "piper")):
         raise RuntimeError("piper not found")
 
     tf = tempfile.NamedTemporaryFile(
@@ -429,16 +447,19 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
                 raise RuntimeError("piper failed")
 
         fx = voice_fx.process_wav(of.name, voice_id=vid)
+
         if fx != of.name:
             rm.append(fx)
 
         src = _norm(fx) if norm else fx
+
         if src != fx:
             rm.append(src)
 
         if fmt == "mp3":
             b = _mp3(src, br)
             m = "audio/mpeg" if b else "audio/wav"
+
             if not b:
                 b = open(src, "rb").read()
 
@@ -466,10 +487,12 @@ def tts(d):
     t0 = time.time()
 
     tx = _san(d.get("text") or "")
+
     if not tx:
         raise RuntimeError("empty")
 
-    tx, mod_flags = mod.filter_text(tx, mode="drop")
+    tx, mod_flags = mod.filter_text(tx)
+
     if not tx:
         raise RuntimeError("empty")
 
@@ -477,10 +500,12 @@ def tts(d):
     p1, clean = _preset_prefix(rest)
 
     clean, speed_mult = _parse_speed_modifier(clean)
+
     if not clean:
         raise RuntimeError("empty")
 
     vf = (d.get("voice") or "").strip()
+
     if vf in aliases:
         vf = aliases[vf]
 
@@ -613,11 +638,18 @@ def _tts_with_sfx(
                 if sfx_count >= max_sfx:
                     continue
 
-                _, ap = sfx._resolve_sfx(p["sfx"], cfg)
+                _, ap = sfx.resolve_sfx(p["sfx"], cfg)
+
                 if not ap:
                     continue
 
-                wav48 = _to_48k_mono_wav(ap)
+                # quiet the censor beeps relative to speech
+                gain = 0
+
+                if p["sfx"].startswith("censor-beep"):
+                    gain = cfg.get("moderation", {}).get("censor_gain_db", 0)
+
+                wav48 = _to_mono_wav(ap, gain_db=gain)
                 segs.append(wav48)
 
                 if wav48 != ap:
@@ -627,13 +659,14 @@ def _tts_with_sfx(
 
             else:
                 txt = (p.get("text") or "").strip()
+
                 if not txt:
                     continue
 
                 wav, tmp = _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm)
                 rm += tmp
 
-                wav48 = _to_48k_mono_wav(wav)
+                wav48 = _to_mono_wav(wav, trim=True)
                 segs.append(wav48)
 
                 if wav48 != wav:
@@ -680,8 +713,8 @@ def health():
     return {
         "ok": True,
         "backend": _backend(),
-        "piper": _which(cfg.get("piper_bin", "piper")) or None,
-        "ffmpeg": _which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
+        "piper": shutil.which(cfg.get("piper_bin", "piper")) or None,
+        "ffmpeg": shutil.which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
         "max_concurrency": int(cfg.get("max_concurrency", 2)),
         "cache": (
@@ -728,7 +761,7 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     info = _vinfo(vid) or vc[_default_voice_id()]
     is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not is_kokoro and not _which(cfg.get("piper_bin", "piper")):
+    if not is_kokoro and not shutil.which(cfg.get("piper_bin", "piper")):
         raise RuntimeError("piper not found")
 
     tf = tempfile.NamedTemporaryFile(
@@ -746,6 +779,7 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
                 _kokoro_synth(txt, vid, ls, of.name)
         else:
             c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
+
             with sem:
                 r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -756,8 +790,10 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
         src = _norm(fx) if norm else fx
 
         extra = []
+
         if fx != of.name:
             extra.append(fx)
+
         if src != fx:
             extra.append(src)
 
@@ -769,12 +805,12 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
                 os.remove(p)
             except Exception:
                 pass
+
         raise
 
 
-# TODO(4770): consider making sample rate configurable
-def _to_48k_mono_wav(inp):
-    f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
+def _to_mono_wav(inp, sample_rate=48000, trim=False, gain_db=0):
+    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
     if not f:
         return inp
@@ -782,38 +818,37 @@ def _to_48k_mono_wav(inp):
     out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     out.close()
 
-    r = subprocess.run(
-        [
-            f,
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            inp,
-            "-ac",
-            "1",
-            "-ar",
-            "48000",
-            "-c:a",
-            "pcm_s16le",
-            out.name,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    cmd = [f, "-y", "-loglevel", "error", "-i", inp]
+
+    af = []
+
+    if trim:
+        af.append(_SILENCE_TRIM)
+
+    if gain_db:
+        af.append(f"volume={gain_db}dB")
+
+    if af:
+        cmd += ["-af", ",".join(af)]
+
+    cmd += ["-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", out.name]
+
+    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     return out.name if r.returncode == 0 and os.path.exists(out.name) else inp
 
 
 def _concat_wavs(paths, fmt="mp3", bitrate=None):
-    f = _which(cfg.get("ffmpeg_bin", "ffmpeg"))
+    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
     if not f:
         raise RuntimeError("ffmpeg not found")
 
     lst = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+
     for p in paths:
         lst.write(f"file '{p}'\n")
+
     lst.close()
 
     merged_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)

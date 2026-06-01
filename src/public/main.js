@@ -37,6 +37,12 @@ async function getPanelStatus() {
   if (ta) ta.style.display = s.admin ? 'block' : 'none'
   const oa = byId('oauth_admin')
   if (oa) oa.style.display = s.admin ? 'block' : 'none'
+  const mp = byId('mod_panel')
+  if (mp) {
+    const canMod = !!(s.admin || s.mod)
+    mp.style.display = canMod ? 'block' : 'none'
+    if (canMod) loadCensorMode()
+  }
   byId('pollq').disabled = !(s.admin || s.mod)
   if (byId('pollq').disabled) byId('pollq').checked = false
   return s
@@ -97,6 +103,23 @@ async function loadVoices() {
   }
 
   ALIAS_SET = new Set([...Object.keys(aliases).map((s) => s.toLowerCase()), ...voices.map((v) => v.id.toLowerCase())])
+}
+
+async function loadCensorMode() {
+  const sel = byId('censor_mode')
+  if (!sel) return
+
+  try {
+    const { mode, modes } = await api.mod.mode()
+    sel.innerHTML = ''
+    for (const m of modes) {
+      const o = document.createElement('option')
+      o.value = m
+      o.textContent = m
+      sel.appendChild(o)
+    }
+    sel.value = mode
+  } catch {}
 }
 
 async function loadSounds() {
@@ -324,6 +347,12 @@ document.addEventListener('change', (e) => {
   const poll = byId('pollq')
   if (a === 'toggle-autoplay' && auto.checked) poll.checked = false
   if (a === 'toggle-poll' && poll.checked) auto.checked = false
+  if (a === 'censor-mode') {
+    api.mod.setMode(e.target.value).catch((err) => {
+      console.error(err)
+      alert(err.message)
+    })
+  }
 })
 
 async function handleMintToken() {

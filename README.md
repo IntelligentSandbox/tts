@@ -120,4 +120,6 @@ All routes are served under the `/api` prefix.
 | POST | `/api/mod/add` | Add a moderation term (mod) |
 | POST | `/api/mod/remove` | Remove a moderation term (mod) |
 | POST | `/api/mod/reload` | Reload moderation terms (mod) |
+| GET | `/api/mod/mode` | Get the current censor mode (mod) |
+| POST | `/api/mod/mode` | Set the censor mode (mod) |
 | GET | `/api/mod/test` | Test moderation on a string (mod) |

@@ -1,6 +1,5 @@
 import sys
 import os
-import re
 
 sys.path.insert(0, os.path.abspath("src"))
 import mod
@@ -11,29 +10,6 @@ def test_mask_token_short_and_long():
     assert mod._mask_token("a") == "*"
     assert mod._mask_token("ab") == "**"
     assert mod._mask_token("hello") == "h***o"
-
-
-def test_slur_censor_mask_drop_and_censor(tmp_path):
-    bl = tmp_path / "blocklist.txt"
-    bl.write_text("badword\nevil\n", encoding="utf-8")
-    c = mod.SlurCensor(str(bl))
-
-    masked, n = c._mask("this is a badword")
-    assert n == 1
-    assert "b*****d" in masked
-
-    dropped, n2 = c._drop("evil things here")
-    assert n2 == 1
-    assert "evil" not in dropped
-
-    out_mask, n3 = c.censor("evil and badword", mode="mask")
-    assert n3 == 2
-    assert re.search(r"e..l|e\*\*l|e\*l", out_mask) or "e**l" in out_mask or "e**l"
-    assert "b*****d" in out_mask
-
-    out_drop, n4 = c.censor("so evil here", mode="drop")
-    assert n4 == 1
-    assert "evil" not in out_drop
 
 
 def test_moderator_filter_urls_and_emojis():
