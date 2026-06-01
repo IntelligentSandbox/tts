@@ -2,7 +2,6 @@ __pycache__/
 .pytest_cache/
 src/tts-venv/
 src/private/
-src/public/
 src/*.log
 src/data/
 tts-error.log

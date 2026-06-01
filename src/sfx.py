@@ -1,14 +1,13 @@
 import os
 import re
 
-
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 SFX_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a")
 
 _sfx_re = re.compile(r"\[SFX:\s*([^\]]+)\]", re.IGNORECASE)
 
-sfx_files = {}
-sfx_aliases = {}
+sfx_files: dict = {}
+sfx_aliases: dict = {}
 
 
 def _scan_sounds(cfg):
@@ -66,7 +65,7 @@ def del_sfx_alias(name):
     sfx_aliases.pop((name or "").strip().lower(), None)
 
 
-def _resolve_sfx(name, cfg):
+def resolve_sfx(name, cfg):
     """Resolve SFX name to URL and path."""
     idx = get_sfx_index(cfg)
     key = (name or "").lower()

@@ -48,6 +48,10 @@ export const api = {
     add: (name, voice) => jpost('/api/aliases', { name, voice })
   },
   sounds: () => jget('/api/sounds'),
+  mod: {
+    mode: () => jget('/api/mod/mode'),
+    setMode: (mode) => jpost('/api/mod/mode', { mode })
+  },
   tts: (body) => postBinary('/api/tts', body),
   ttsBatch: (body) => postBinary('/api/tts_batch', body),
   queue: {

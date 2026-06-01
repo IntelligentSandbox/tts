@@ -1,6 +1,6 @@
+import json
 import os
 import sqlite3
-import json
 
 TOKENS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tokens (

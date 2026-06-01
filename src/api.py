@@ -1,22 +1,26 @@
+import json
 import os
+import secrets
+import time
+import uuid
 from collections import deque
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, HTMLResponse
+
+import jwt
 import requests
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-import secrets_util as sec
-import tts as eng
-import sfx
-import mod
-import uuid
-import json
-import time
-import secrets
-import jwt
 import db
+import mod
+import secrets_util as sec
+import sfx
+import tts as eng
+
+app: FastAPI
+Q: deque
 
 MAX_SOUNDS = 10
 
@@ -33,21 +37,26 @@ ROLE_TREE = {
 
 def _eff_from_session(req):
     eff = set()
+
     for r, grants in ROLE_TREE.items():
         if req.session.get(r):
             eff |= grants
+
     return eff
 
 
 def _eff_from_key(k):
     if not k:
         return set()
+
     import tts as eng
 
     eff = set()
+
     for r, grants in ROLE_TREE.items():
         if eng.auth_ok(r, k):
             eff |= grants
+
     return eff
 
 
@@ -57,13 +66,18 @@ def need(role):
 
         if not eng.auth_enabled():
             return
+
         if role in _eff_from_session(req):
             return
+
         k = req.headers.get("x-api-key") or req.headers.get("authorization") or ""
+
         if k.lower().startswith("bearer "):
             k = k[7:]
+
         if role in _eff_from_key(k):
             return
+
         if k:
             try:
                 pl = jwt.decode(k, req.app.state.jwt_secret, algorithms=["HS256"])
@@ -71,14 +85,19 @@ def need(role):
                 raise HTTPException(401, "token expired")
             except Exception:
                 pl = None
+
             if pl:
                 jti = pl.get("jti")
                 roles = pl.get("roles") or []
+
                 if role in roles:
                     tk = db.get_token(jti)
+
                     if tk and tk.get("revoked"):
                         raise HTTPException(401, "revoked")
+
                     return
+
         raise HTTPException(401, "unauthorized")
 
     return Depends(dep)
@@ -90,6 +109,7 @@ def make_app(cfg, config_path: str | None = None):
 
     # derive base dir from provided config_path when available
     config_dir = None
+
     if config_path:
         try:
             config_dir = os.path.dirname(os.path.abspath(config_path))
@@ -106,45 +126,55 @@ def make_app(cfg, config_path: str | None = None):
             ),
             os.path.join(os.getcwd(), "config.yaml"),
         ]
+
         for p in possible:
             if not p:
                 continue
+
             try:
                 if os.path.exists(p):
                     config_dir = os.path.dirname(os.path.abspath(p))
                     break
             except Exception:
                 continue
+
     app = FastAPI(title="tts")
     app.state.config_dir = config_dir
     eng.init(cfg, base_dir=config_dir)
+
     sd = cfg.get(
         "sounds_dir",
         os.path.join(os.path.dirname(__file__), "..", "sounds"),
     )
+
     if os.path.isdir(sd):
         app.mount("/sounds", StaticFiles(directory=sd), name="sounds")
 
     s = cfg.get("session") or {}
     app.state.cfg = cfg
+
     secrets_file = (
         s.get("file")
         or (cfg.get("auth") or {}).get("file")
         or cfg.get("secrets_file")
         or os.path.join(os.path.dirname(__file__), "private", "secrets.yaml")
     )
+
     secret = s.get("secret") or sec.ensure_session_secret(
         secrets_file, base_dir=config_dir
     )
+
     db.init_db(
         cfg.get(
             "db_file",
             os.path.join(os.path.dirname(__file__), "private", "data", "tts.db"),
         )
     )
+
     app.state.jwt_secret = cfg.get("jwt_secret") or sec.ensure_jwt_secret(
         secrets_file, base_dir=config_dir
     )
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=secret,
@@ -154,6 +184,7 @@ def make_app(cfg, config_path: str | None = None):
     )
 
     ori = cfg.get("cors_allow_origins", "*")
+
     if ori == "*":
         app.add_middleware(
             CORSMiddleware,
@@ -168,6 +199,7 @@ def make_app(cfg, config_path: str | None = None):
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
     r = APIRouter(prefix="/api")
 
     @r.get("/sounds", dependencies=[need("tts")])
@@ -208,24 +240,33 @@ def make_app(cfg, config_path: str | None = None):
                 if "sfx" in p:
                     if sfx_count > MAX_SOUNDS:
                         continue
-                    _, ap = sfx._resolve_sfx(p.get("sfx"), cfg)
+
+                    _, ap = sfx.resolve_sfx(p.get("sfx"), cfg)
+
                     if not ap:
                         continue
-                    wav48 = eng._to_48k_mono_wav(ap)
+
+                    wav48 = eng._to_mono_wav(ap)
                     segs.append(wav48)
+
                     if wav48 != ap:
                         rm.append(wav48)
+
                     sfx_count += 1
                 else:
                     txt = (p.get("text") or "").strip()
+
                     if not txt:
                         continue
+
                     reqv = (p.get("voice") or "").strip()
                     vid, _ = eng._resolve_voice_id(reqv)
                     wav, tmp = eng._render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm)
                     rm += tmp
-                    wav48 = eng._to_48k_mono_wav(wav)
+
+                    wav48 = eng._to_mono_wav(wav, trim=True)
                     segs.append(wav48)
+
                     if wav48 != wav:
                         rm.append(wav48)
 
@@ -250,9 +291,12 @@ def make_app(cfg, config_path: str | None = None):
     def peek():
         if not Q:
             return Response(status_code=204)
+
         it = Q.popleft()
+
         if not it.get("id"):
             it["id"] = uuid.uuid4().hex[:8]
+
         Q.appendleft(it)
         return dict(it)
 
@@ -260,16 +304,21 @@ def make_app(cfg, config_path: str | None = None):
     def queue_delete(qid: str):
         if not qid:
             raise HTTPException(400, "bad id")
+
         n = 0
         tmp = []
+
         while Q:
             it = Q.popleft()
+
             if str(it.get("id")) == str(qid):
                 n += 1
             else:
                 tmp.append(it)
+
         for it in tmp:
             Q.append(it)
+
         return {"deleted": n}
 
     @r.post("/panel/login")
@@ -278,13 +327,17 @@ def make_app(cfg, config_path: str | None = None):
 
         if not eng.auth_enabled():
             raise HTTPException(400, "auth disabled")
+
         j = await req.json()
         role = (j.get("role") or "").strip()
         key = (j.get("key") or "").strip()
+
         if role not in ("admin", "mod"):
             raise HTTPException(400, "bad role")
+
         if not eng.auth_ok(role, key):
             raise HTTPException(401, "invalid key")
+
         if role == "admin":
             req.session["admin"] = True
             req.session["mod"] = True
@@ -294,6 +347,7 @@ def make_app(cfg, config_path: str | None = None):
         else:
             req.session["mod"] = True
             req.session["tts"] = True
+
         return {"ok": True, "role": role}
 
     # OAuth: initiate login with provider (e.g., twitch)
@@ -311,8 +365,10 @@ def make_app(cfg, config_path: str | None = None):
         )
         client_id = cfg.get("client_id")
         redirect = cfg.get("redirect_uri") or (req.url_for("overlay") if req else None)
+
         if not client_id or not redirect:
             raise HTTPException(400, "oauth not configured")
+
         # build twitch authorize URL
         if provider == "twitch":
             from urllib.parse import urlencode
@@ -324,7 +380,9 @@ def make_app(cfg, config_path: str | None = None):
                 "scope": "user:read:email",
             }
             url = "https://id.twitch.tv/oauth2/authorize?" + urlencode(params)
+
             return Response(status_code=302, headers={"Location": url})
+
         raise HTTPException(400, "unsupported provider")
 
     @r.get("/auth/callback")
@@ -349,14 +407,19 @@ def make_app(cfg, config_path: str | None = None):
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
         redirect = cfg.get("redirect_uri")
+
         if not client_id or not client_secret or not redirect:
             raise HTTPException(400, "oauth not configured")
+
         if provider != "twitch":
             raise HTTPException(400, "unsupported provider")
+
         if not code:
             raise HTTPException(400, "missing code")
+
         # exchange code
         token_url = "https://id.twitch.tv/oauth2/token"
+
         try:
             r = requests.post(
                 token_url,
@@ -373,9 +436,12 @@ def make_app(cfg, config_path: str | None = None):
             tok = r.json()
         except Exception as e:
             raise HTTPException(400, f"token exchange failed: {e}")
+
         access = tok.get("access_token")
+
         if not access:
             raise HTTPException(400, "no access token")
+
         # get user info
         try:
             hr = requests.get(
@@ -390,19 +456,24 @@ def make_app(cfg, config_path: str | None = None):
             u = hr.json()
         except Exception as e:
             raise HTTPException(400, f"user lookup failed: {e}")
+
         # extract id/login
         data = u.get("data") or []
+
         if not data:
             raise HTTPException(400, "no user data")
+
         user = data[0]
         twitch_id = user.get("id")
         login = user.get("login")
+
         # store oauth identity in session so UI can fetch it (whoami)
         try:
             request.session[f"oauth_{provider}_id"] = str(twitch_id)
             request.session[f"oauth_{provider}_login"] = (login or "").lower()
         except Exception:
             pass
+
         # map to role if mapping exists
         mapped = sec.list_oauth_mappings(
             "twitch",
@@ -416,6 +487,7 @@ def make_app(cfg, config_path: str | None = None):
             ),
         )
         role = mapped.get(str(twitch_id)) or mapped.get((login or "").lower())
+
         if role == "admin":
             request.session["admin"] = True
             request.session["mod"] = True
@@ -429,6 +501,7 @@ def make_app(cfg, config_path: str | None = None):
             # unmapped: show simple HTML telling user to ask admin to map their account
             text = f"<html><body>Login OK (user={login}). Account not mapped to a role. Ask an admin to map your Twitch id {twitch_id} to a role.</body></html>"
             return HTMLResponse(text)
+
         return Response(status_code=302, headers={"Location": "/"})
 
     @r.get("/auth/me")
@@ -437,13 +510,16 @@ def make_app(cfg, config_path: str | None = None):
         prov = provider or "twitch"
         sid = None
         slogin = None
+
         try:
-            sid = req.session.get(f"oauth_{prov}_id")
-            slogin = req.session.get(f"oauth_{prov}_login")
+            sid = req.session.get(f"oauth_{prov}_id")  # type: ignore[union-attr]
+            slogin = req.session.get(f"oauth_{prov}_login")  # type: ignore[union-attr]
         except Exception:
             pass
+
         if not sid and not slogin:
             return {"ok": False}
+
         return {"ok": True, "provider": prov, "id": sid, "login": slogin}
 
     @r.get("/auth/mappings", dependencies=[need("admin")])
@@ -459,8 +535,10 @@ def make_app(cfg, config_path: str | None = None):
         provider = (j.get("provider") or "twitch").strip()
         remote = str(j.get("remote") or "").strip()
         role = (j.get("role") or "").strip()
+
         if not provider or not remote or role not in ("admin", "mod"):
             raise HTTPException(400, "bad mapping")
+
         sec.save_oauth_mapping(
             provider,
             remote,
@@ -479,6 +557,7 @@ def make_app(cfg, config_path: str | None = None):
             base_dir=app.state.config_dir,
         ):
             return {"ok": True}
+
         raise HTTPException(404, "mapping not found")
 
     @r.post("/panel/logout")
@@ -500,11 +579,15 @@ def make_app(cfg, config_path: str | None = None):
     async def mod_mask(req: Request):
         j = await req.json()
         text = (j.get("text") or "").strip()
+
         if not text:
             return {"masked": "", "flags": {"urls": 0, "emojis": 0, "slurs": 0}}
+
         if not mod.mod_enabled():
             return {"masked": text, "flags": {"urls": 0, "emojis": 0, "slurs": 0}}
+
         masked, flags = mod.get_moderator().filter(text, mode="mask")
+
         return {"masked": masked, "flags": flags}
 
     @r.get("/healthz")
@@ -528,8 +611,10 @@ def make_app(cfg, config_path: str | None = None):
         j = await req.json()
         n = (j.get("name") or "").strip().lower()
         v = (j.get("voice") or "").strip()
+
         if not n or not v:
             raise HTTPException(400, "bad alias")
+
         eng.set_alias(n, v)
         return eng.get_aliases()
 
@@ -572,13 +657,19 @@ def make_app(cfg, config_path: str | None = None):
             j = await req.json()
         except Exception:
             raise HTTPException(400, "invalid json")
+
         t = (j.get("text") or "").strip()
+
         if not t:
             raise HTTPException(400, "text required")
+
         mx = eng.cfg.get("max_text_chars", 500)
+
         if len(t) > mx:
             t = t[:mx]
+
         j["text"] = t
+
         # assign id for deletion
         import uuid
 
@@ -590,9 +681,12 @@ def make_app(cfg, config_path: str | None = None):
     def pull():
         if not Q:
             return Response(status_code=204)
+
         it = Q.popleft()
+
         if not it.get("id"):
             it["id"] = uuid.uuid4().hex[:8]
+
         return it
 
     @r.get("/overlay")
@@ -600,28 +694,41 @@ def make_app(cfg, config_path: str | None = None):
         from fastapi.responses import HTMLResponse
 
         p = os.path.join(os.getcwd(), "public", "overlay.html")
+
         if not os.path.isfile(p):
             raise HTTPException(404, "overlay not found")
+
         with open(p, "r", encoding="utf-8") as f:
             html = f.read()
+
         if not embed:
             return HTMLResponse(html)
+
         em = db.get_embed(embed)
+
         if not em:
             raise HTTPException(404, "embed not found")
+
         tk = db.get_token(em.get("jti"))
+
         if not tk:
             raise HTTPException(404, "token not found")
+
         if tk.get("revoked"):
             raise HTTPException(401, "revoked")
+
         if tk.get("expires", 0) < int(time.time()):
             raise HTTPException(401, "expired")
+
         # enforce origin if embed has an origin bound
         bound_origin = em.get("origin")
+
         if bound_origin:
             req_origin = req.headers.get("origin")
+
             if not req_origin or req_origin != bound_origin:
                 raise HTTPException(403, "forbidden: origin mismatch")
+
         payload = {
             "iss": "tts",
             "iat": int(time.time()),
@@ -670,8 +777,10 @@ def make_app(cfg, config_path: str | None = None):
     @r.delete("/overlay/embed/{embed_id}", dependencies=[need("admin")])
     def overlay_delete_embed(embed_id: str):
         em = db.get_embed(embed_id)
+
         if not em:
             raise HTTPException(404, "embed not found")
+
         db.delete_embed(embed_id)
         return {"ok": True}
 
@@ -679,6 +788,7 @@ def make_app(cfg, config_path: str | None = None):
     def overlay_list_tokens():
         toks = db.list_tokens()
         out = []
+
         for t in toks:
             out.append(
                 {
@@ -689,12 +799,14 @@ def make_app(cfg, config_path: str | None = None):
                     "note": t["note"],
                 }
             )
+
         return {"tokens": out}
 
     @r.get("/overlay/embeds", dependencies=[need("admin")])
     def overlay_list_embeds():
         embeds = db.list_embeds()
         out = []
+
         for e in embeds:
             tk = db.get_token(e.get("jti")) or {}
             out.append(
@@ -708,59 +820,94 @@ def make_app(cfg, config_path: str | None = None):
                     "revoked": tk.get("revoked", False),
                 }
             )
+
         return {"embeds": out}
 
     @r.delete("/overlay/token/{jti}", dependencies=[need("admin")])
     def overlay_revoke_token(jti: str):
         if db.revoke_token(jti):
             return {"ok": True}
+
         if db.revoke_token_prefix(jti):
             return {"ok": True}
+
         raise HTTPException(404, "token not found")
 
     @r.get("/mod/list", dependencies=[need("mod")])
     def mod_list_route():
         if not mod.mod_enabled():
             raise HTTPException(400, "moderation disabled")
+
         return {"terms": mod.mod_list()}
 
     @r.post("/mod/add", dependencies=[need("mod")])
     async def mod_add_route(req: Request):
         if not mod.mod_enabled():
             raise HTTPException(400, "moderation disabled")
+
         j = await req.json()
         term = (j.get("term") or "").strip()
+
         if not term:
             raise HTTPException(400, "term required")
+
         return mod.mod_add(term)
 
     @r.post("/mod/remove", dependencies=[need("mod")])
     async def mod_remove_route(req: Request):
         if not mod.mod_enabled():
             raise HTTPException(400, "moderation disabled")
+
         j = await req.json()
         term = (j.get("term") or "").strip()
+
         if not term:
             raise HTTPException(400, "term required")
+
         return mod.mod_remove(term)
 
     @r.post("/mod/reload", dependencies=[need("mod")])
     def mod_reload_route():
         if not mod.mod_enabled():
             raise HTTPException(400, "moderation disabled")
+
         return mod.mod_reload()
+
+    @r.get("/mod/mode", dependencies=[need("mod")])
+    def mod_mode_route():
+        if not mod.mod_enabled():
+            raise HTTPException(400, "moderation disabled")
+
+        return mod.mod_mode()
+
+    @r.post("/mod/mode", dependencies=[need("mod")])
+    async def mod_set_mode_route(req: Request):
+        if not mod.mod_enabled():
+            raise HTTPException(400, "moderation disabled")
+
+        j = await req.json()
+
+        try:
+            return mod.mod_set_mode(j.get("mode"))
+        except ValueError:
+            raise HTTPException(400, "bad mode")
 
     @r.get("/mod/test", dependencies=[need("mod")])
     def modtest(text: str):
         tx = text
+
         if mod.mod_enabled():
             tx2, flags = mod.get_moderator().filter(tx)
         else:
             tx2, flags = tx, {"urls": 0, "emojis": 0, "slurs": 0}
+
         return {"in": tx, "out": tx2, "flags": flags}
 
     app.include_router(r)
+
     public_dir = os.path.join(os.path.dirname(__file__), "public")
+
     if os.path.isdir(public_dir):
         app.mount("/", StaticFiles(directory=public_dir, html=True), name="ui")
+
     return app

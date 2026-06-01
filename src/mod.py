@@ -1,9 +1,15 @@
 import os
+import random
 import re
 import unicodedata
+
 from util import resolve_path
 
 _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
+
+_BEEPS = ("censor-beep-1", "censor-beep-2", "censor-beep-3")
+
+CENSOR_MODES = ("drop", "mask", "beep", "duck", "random")
 
 _leet = {
     "a": "[a@4]",
@@ -18,7 +24,7 @@ _leet = {
     "z": "[z2]",
 }
 
-_emoji = set()
+_emoji: set = set()
 
 # TODO(393e): https://unicode.org/reports/tr51/tr51-12.html#Identification
 with open(
@@ -52,6 +58,26 @@ def _mask_token(src):
     return (
         "*" * len(src) if len(src) <= 2 else (src[0] + "*" * (len(src) - 2) + src[-1])
     )
+
+
+def _censor_sound(word, mode):
+    """Pick a censor sound id for a slur based on mode and length."""
+    if mode == "duck":
+        return "censor-beep-duck"
+
+    if mode == "random":
+        return random.choice(_BEEPS + ("censor-beep-duck",))
+
+    # longer word gets a longer beep
+    n = sum(ch.isalnum() for ch in word)
+
+    if n <= 4:
+        return _BEEPS[0]
+
+    if n <= 7:
+        return _BEEPS[1]
+
+    return _BEEPS[2]
 
 
 def _normalize(s):
@@ -155,61 +181,6 @@ class SlurCensor:
         except OSError:
             pass
 
-    def _mask(self, s):
-        """
-        Mask slurs in a string
-
-        :param s: Input string
-        :return: Tuple of masked string and number of replacements
-        """
-        n = 0
-
-        def repl(m):
-            nonlocal n
-            n += 1
-            src = m.group(0)
-            return (
-                "*" * len(src)
-                if len(src) <= 2
-                else src[0] + "*" * (len(src) - 2) + src[-1]
-            )
-
-        for rx in self.rxs:
-            s = rx.sub(repl, s)
-        return s, n
-
-    def _drop(self, s):
-        """
-        Remove slurs from a string
-
-        :param s: Input string
-        :return: Tuple of cleaned string and number of removals
-        """
-        n = 0
-
-        def repl(m):
-            nonlocal n
-            n += 1
-            return ""  # remove the word entirely
-
-        for rx in self.rxs:
-            s = rx.sub(repl, s)
-        # collapse double spaces left by drops
-        return " ".join(s.split()), n
-
-    def censor(self, s, mode="drop"):
-        """
-        Apply slur censorship to a string
-
-        :param s: Input string
-        :param mode: 'mask' to mask slurs, 'drop' to remove them
-        :return: Tuple of censored string and number of replacement
-        """
-        self.ensure_fresh()
-        if not self.rxs:
-            return s, 0
-        return self._drop(s) if mode == "drop" else self._mask(s)
-
 
 class Moderator:
     def __init__(self, cfg=None):
@@ -223,18 +194,20 @@ class Moderator:
         self.strip_urls = bool(cfg.get("strip_urls", True))
         self.strip_emojis = bool(cfg.get("strip_emojis", True))
         self.censor_slurs = bool(cfg.get("censor_slurs", True))
+        self.censor_mode = (cfg.get("censor_mode") or "drop").lower()
         bl_path = cfg.get("blocklist_path")
         self.censor = SlurCensor(bl_path) if bl_path else SlurCensor(None)
 
-    def filter(self, s, mode="mask"):
+    def filter(self, s, mode=None):
         """
         Filter a string based on the config rules
 
         :param s: Input string
-        :param mode: 'mask' to mask slurs, 'drop' to remove them
+        :param mode: mask, drop, beep, duck, or random (None uses config)
         :return: Tuple of filtered string and dictionary of flags e.g.,
                     {'urls': 0/1, 'emojis': 0/1', 'slurs': count}
         """
+        mode = mode or self.censor_mode
         out = s or ""
         flags = {"urls": 0, "emojis": 0, "slurs": 0}
 
@@ -251,12 +224,21 @@ class Moderator:
                 flags["emojis"] = 1
 
         if self.censor_slurs and self.censor:
+            self.censor.ensure_fresh()
             n = 0
 
             def repl(m):
                 nonlocal n
                 n += 1
-                return _mask_token(m.group(0)) if mode == "mask" else ""
+                src = m.group(0)
+
+                if mode == "mask":
+                    return _mask_token(src)
+
+                if mode in ("beep", "duck", "random"):
+                    return f"[SFX: {_censor_sound(src, mode)}]"
+
+                return ""
 
             for rx in self.censor.rxs:
                 out = rx.sub(repl, out)
@@ -316,7 +298,30 @@ def mod_reload():
     return {"reloaded": True}
 
 
-def filter_text(text, mode="drop"):
+def mod_mode():
+    """Get the current censor mode."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+
+    return {"mode": _moderator.censor_mode, "modes": list(CENSOR_MODES)}
+
+
+def mod_set_mode(mode):
+    """Set the censor mode at runtime."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+
+    mode = (mode or "").strip().lower()
+
+    if mode not in CENSOR_MODES:
+        raise ValueError("bad mode")
+
+    _moderator.censor_mode = mode
+
+    return {"mode": mode}
+
+
+def filter_text(text, mode=None):
     """Filter text using moderation rules."""
     if not _moderator:
         return text, {"urls": 0, "emojis": 0, "slurs": 0}

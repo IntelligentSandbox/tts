@@ -32,7 +32,17 @@ select = ["E", "F", "I"]
 quote-style = "double"
 indent-style = "space"
 
+[tool.mypy]
+python_version = "3.11"
+files = ["."]
+ignore_missing_imports = true
+implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+exclude = ["tts-venv/"]
+
 [dependency-groups]
 dev = [
+    "mypy>=2.1.0",
     "ruff>=0.15.12",
 ]

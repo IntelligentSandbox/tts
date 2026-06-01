@@ -3,7 +3,6 @@
 import os
 import tempfile
 
-from log import logger
 from pedalboard import (
     Bitcrush,
     Chorus,
@@ -19,13 +18,16 @@ from pedalboard import (
 )
 from pedalboard.io import AudioFile
 
-_cfg = {}
+from log import logger
+
+_cfg: dict = {}
 _default_board = None
-_voice_boards = {}
+_voice_boards: dict = {}
 
 
 def init(cfg):
     global _cfg, _default_board, _voice_boards
+
     _cfg = cfg.get("voice_fx") or {}
     _default_board = None
     _voice_boards = {}
@@ -35,8 +37,10 @@ def init(cfg):
         return
 
     _default_board = _build(_cfg.get("chain") or [])
+
     for vid, sub in (_cfg.get("per_voice") or {}).items():
         _voice_boards[vid] = _build(sub.get("chain") or [])
+
     logger.info(
         f"[voice_fx] enabled; default_stages={len(_default_board or [])} "
         f"per_voice={list(_voice_boards.keys())}"
@@ -57,17 +61,22 @@ def _build(chain_cfg):
         "compressor": Compressor,
     }
     stages = []
+
     for s in chain_cfg:
         t = (s.get("type") or "").lower()
         cls = kinds.get(t)
+
         if not cls:
             logger.warning(f"[voice_fx] unknown stage type: {t}")
             continue
+
         params = {k: v for k, v in s.items() if k != "type"}
+
         try:
             stages.append(cls(**params))
         except Exception as e:
             logger.warning(f"[voice_fx] bad params for {t}: {e}")
+
     return Pedalboard(stages)
 
 
@@ -81,23 +90,30 @@ def process_wav(in_path, voice_id=None):
         return in_path
 
     board = _voice_boards.get(voice_id, _default_board)
+
     if board is None or len(board) == 0:
         return in_path
 
     out = tempfile.NamedTemporaryFile(suffix=".fx.wav", delete=False)
     out.close()
+
     try:
         with AudioFile(in_path) as f:
             sr = f.samplerate
             audio = f.read(f.frames)
+
         processed = board(audio, sr)
+
         with AudioFile(out.name, "w", sr, processed.shape[0]) as fo:
             fo.write(processed)
+
         return out.name
     except Exception as e:
         logger.warning(f"[voice_fx] process failed: {e}")
+
         try:
             os.remove(out.name)
         except Exception:
             pass
+
         return in_path
