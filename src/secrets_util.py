@@ -1,6 +1,6 @@
 import os
-import stat
 import secrets
+import stat
 
 import yaml
 

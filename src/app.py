@@ -1,11 +1,11 @@
-import os
 import argparse
+import os
 
 import uvicorn
 
 from api import make_app
-from log import configure, logger
 from config import load_cfg
+from log import configure, logger
 from util import DEFAULT_HOST, DEFAULT_PORT
 
 DEFAULT_CFG = os.path.join(os.path.dirname(__file__), "private", "config.yaml")
