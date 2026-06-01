@@ -1,12 +1,15 @@
 import os
 import shutil
+import sys
 from subprocess import run
 
-venv_dir = os.path.abspath("./tts-venv")
-uv_path = shutil.which("uv")
-assert uv_path, "uv not found in PATH"
+no_venv = "--no-venv" in sys.argv
 
-if not os.path.isdir(venv_dir):
+venv_dir = os.path.abspath("./tts-venv")
+
+if not no_venv and not os.path.isdir(venv_dir):
+    uv_path = shutil.which("uv")
+    assert uv_path, "uv not found in PATH"
     run(
         [uv_path, "sync", "--no-config", "--project", "."],
         env={**os.environ, "UV_PROJECT_ENVIRONMENT": venv_dir},
