@@ -81,10 +81,6 @@ _piper_voices: dict = {}
 _piper_lock = threading.Lock()
 
 
-def _backend():
-    return (cfg.get("backend", "piper") or "piper").strip().lower()
-
-
 def _piper_resident():
     # keep the onnx model loaded in-process instead of spawning piper per call
     return bool(cfg.get("piper_resident", True))
@@ -171,22 +167,25 @@ def init(c, base_dir: str | None = None):
 
 
 def warmup():
-    """Preload the default piper voice so the first request is hot."""
-    if _backend() != "piper" or not _piper_resident():
+    """Preload the first piper voice so the first request is hot."""
+    if not _piper_resident():
+        return
+
+    piper = sorted(
+        [v for v in vc.values() if v.get("backend") == "piper"],
+        key=lambda x: x["id"],
+    )
+
+    if not piper:
         return
 
     try:
-        info = _vinfo(_default_voice_id())
-
-        if not info:
-            return
-
         of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         of.close()
 
         try:
-            _piper_synth(info, "warming up", of.name, None, None, None, None)
-            logger.info(f"[warmup] piper voice ready: {info['id']}")
+            _piper_synth(piper[0], "warming up", of.name, None, None, None, None)
+            logger.info(f"[warmup] piper voice ready: {piper[0]['id']}")
         finally:
             try:
                 os.remove(of.name)
@@ -227,50 +226,48 @@ def _scan():
     global scanned, vc
     v = {}
     base = cfg.get("voices_dir", DEFAULT_VOICES)
-    b = _backend()
 
-    if b == "kokoro":
-        for name in KOKORO_VOICES:
-            v[name] = {
-                "id": name,
-                "backend": "kokoro",
-                "model_path": None,
-                "config_path": None,
-                "sample_rate": KOKORO_SR,
-                "speakers": 1,
-                "language": "en-gb" if name.startswith("b") else "en-us",
-            }
-    else:
-        p = (
-            os.path.join(base, "piper")
-            if os.path.isdir(os.path.join(base, "piper"))
-            else base
-        )
+    for name in KOKORO_VOICES:
+        v[name] = {
+            "id": name,
+            "backend": "kokoro",
+            "model_path": None,
+            "config_path": None,
+            "sample_rate": KOKORO_SR,
+            "speakers": 1,
+            "language": "en-gb" if name.startswith("b") else "en-us",
+        }
 
-        for j in glob.glob(os.path.join(p, "**", "*.onnx.json"), recursive=True):
-            m = j[:-5]
-            if not os.path.exists(m):
-                continue
+    p = (
+        os.path.join(base, "piper")
+        if os.path.isdir(os.path.join(base, "piper"))
+        else base
+    )
 
-            i = os.path.splitext(os.path.basename(m))[0]
-            try:
-                meta = json.load(open(j, "r", encoding="utf-8"))
-            except Exception:
-                meta = {}
+    for j in glob.glob(os.path.join(p, "**", "*.onnx.json"), recursive=True):
+        m = j[:-5]
+        if not os.path.exists(m):
+            continue
 
-            v[i] = {
-                "id": i,
-                "backend": "piper",
-                "model_path": m,
-                "config_path": j,
-                "sample_rate": meta.get(
-                    "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
-                ),
-                "speakers": len(meta.get("speakers", [0])),
-                "language": meta.get(
-                    "language", meta.get("espeak", {}).get("voice", "")
-                ),
-            }
+        i = os.path.splitext(os.path.basename(m))[0]
+        try:
+            meta = json.load(open(j, "r", encoding="utf-8"))
+        except Exception:
+            meta = {}
+
+        v[i] = {
+            "id": i,
+            "backend": "piper",
+            "model_path": m,
+            "config_path": j,
+            "sample_rate": meta.get(
+                "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
+            ),
+            "speakers": len(meta.get("speakers", [0])),
+            "language": meta.get(
+                "language", meta.get("espeak", {}).get("voice", "")
+            ),
+        }
 
     vc = v
     scanned = True
@@ -735,7 +732,7 @@ def _tts_with_sfx(
 def health():
     return {
         "ok": True,
-        "backend": _backend(),
+        "backends": sorted({v.get("backend") for v in vc.values() if v.get("backend")}),
         "piper": "resident" if _piper_resident() and _piper_voices else shutil.which(cfg.get("piper_bin", "piper")) or None,
         "ffmpeg": shutil.which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
