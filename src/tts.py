@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import uuid
+import wave
 
 from cachetools import TTLCache
 
@@ -76,9 +77,47 @@ KOKORO_SR = 24000
 _kokoro_pipelines: dict = {}
 _kokoro_lock = threading.Lock()
 
+_piper_voices: dict = {}
+_piper_lock = threading.Lock()
+
 
 def _backend():
     return (cfg.get("backend", "piper") or "piper").strip().lower()
+
+
+def _piper_resident():
+    # keep the onnx model loaded in-process instead of spawning piper per call
+    return bool(cfg.get("piper_resident", True))
+
+
+def _piper_voice(info):
+    vid = info["id"]
+
+    with _piper_lock:
+        v = _piper_voices.get(vid)
+
+        if v is None:
+            from piper import PiperVoice
+
+            v = PiperVoice.load(info["model_path"], info["config_path"])
+            _piper_voices[vid] = v
+
+        return v
+
+
+def _piper_synth(info, txt, out_path, ls, ns, nw, spk):
+    from piper import SynthesisConfig
+
+    voice = _piper_voice(info)
+    sc = SynthesisConfig(
+        speaker_id=spk,
+        length_scale=ls,
+        noise_scale=ns,
+        noise_w_scale=nw,
+    )
+
+    with wave.open(out_path, "wb") as wf:
+        voice.synthesize_wav(txt, wf, sc)
 
 
 def _kokoro_pipeline(voice_id):
@@ -129,6 +168,32 @@ def init(c, base_dir: str | None = None):
         logger.info("[auth] disabled")
 
     voices()
+
+
+def warmup():
+    """Preload the default piper voice so the first request is hot."""
+    if _backend() != "piper" or not _piper_resident():
+        return
+
+    try:
+        info = _vinfo(_default_voice_id())
+
+        if not info:
+            return
+
+        of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        of.close()
+
+        try:
+            _piper_synth(info, "warming up", of.name, None, None, None, None)
+            logger.info(f"[warmup] piper voice ready: {info['id']}")
+        finally:
+            try:
+                os.remove(of.name)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"[warmup] failed: {e}")
 
 
 def auth_enabled():
@@ -294,34 +359,6 @@ def _parse_speed_modifier(s):
     return clean, multiplier
 
 
-def _cmd(info, txt, out, ls, ns, nw, ss, spk):
-    c = [
-        cfg.get("piper_bin", "piper"),
-        "--model",
-        info["model_path"],
-        "--config",
-        info["config_path"],
-        "--input_file",
-        txt,
-        "--output_file",
-        out,
-        "-q",
-    ]
-
-    if spk is not None:
-        c += ["--speaker", str(spk)]
-    if ls is not None:
-        c += ["--length_scale", str(ls)]
-    if ns is not None:
-        c += ["--noise_scale", str(ns)]
-    if nw is not None:
-        c += ["--noise_w", str(nw)]
-    if ss is not None:
-        c += ["--sentence_silence", str(ss)]
-
-    return c
-
-
 def _norm(w):
     if not bool(cfg.get("normalize", False)):
         return w
@@ -419,32 +456,18 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     info = _vinfo(vid)
     is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not is_kokoro and not shutil.which(cfg.get("piper_bin", "piper")):
-        raise RuntimeError("piper not found")
-
-    tf = tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".txt", delete=False
-    )
-    tf.write(txt + "\n")
-    tf.close()
-
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
 
-    rm = [tf.name, of.name]
+    rm = [of.name]
 
     try:
         if is_kokoro:
             with sem:
                 _kokoro_synth(txt, vid, ls, of.name)
         else:
-            c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
-
             with sem:
-                r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            if r.returncode != 0 or not os.path.exists(of.name):
-                raise RuntimeError("piper failed")
+                _piper_synth(info, txt, of.name, ls, ns, nw, spk)
 
         fx = voice_fx.process_wav(of.name, voice_id=vid)
 
@@ -713,7 +736,7 @@ def health():
     return {
         "ok": True,
         "backend": _backend(),
-        "piper": shutil.which(cfg.get("piper_bin", "piper")) or None,
+        "piper": "resident" if _piper_resident() and _piper_voices else shutil.which(cfg.get("piper_bin", "piper")) or None,
         "ffmpeg": shutil.which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
         "max_concurrency": int(cfg.get("max_concurrency", 2)),
@@ -761,15 +784,6 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     info = _vinfo(vid) or vc[_default_voice_id()]
     is_kokoro = (info or {}).get("backend") == "kokoro"
 
-    if not is_kokoro and not shutil.which(cfg.get("piper_bin", "piper")):
-        raise RuntimeError("piper not found")
-
-    tf = tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".txt", delete=False
-    )
-    tf.write(txt + "\n")
-    tf.close()
-
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
 
@@ -778,13 +792,8 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
             with sem:
                 _kokoro_synth(txt, vid, ls, of.name)
         else:
-            c = _cmd(info, tf.name, of.name, ls, ns, nw, ss, spk)
-
             with sem:
-                r = subprocess.run(c, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            if r.returncode != 0 or not os.path.exists(of.name):
-                raise RuntimeError("piper failed")
+                _piper_synth(info, txt, of.name, ls, ns, nw, spk)
 
         fx = voice_fx.process_wav(of.name, voice_id=vid)
         src = _norm(fx) if norm else fx
@@ -797,14 +806,13 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
         if src != fx:
             extra.append(src)
 
-        return src, [tf.name, of.name] + extra
+        return src, [of.name] + extra
 
     except:
-        for p in [tf.name, of.name]:
-            try:
-                os.remove(p)
-            except Exception:
-                pass
+        try:
+            os.remove(of.name)
+        except Exception:
+            pass
 
         raise
 
