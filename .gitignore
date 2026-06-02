@@ -9,3 +9,5 @@ data/
 voices/*.onnx
 voices/*.onnx.json
 voices/piper/
+sounds/*
+!sounds/mod/
