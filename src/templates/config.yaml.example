@@ -2,9 +2,6 @@
 voices_dir: ../../voices
 sounds_dir: ../../sounds
 
-# piper | kokoro
-backend: piper
-
 # mp3 | wav
 default_format: mp3
 
