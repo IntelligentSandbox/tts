@@ -5,6 +5,7 @@ import time
 import uuid
 from collections import deque
 
+import anyio
 import jwt
 import requests
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -141,6 +142,7 @@ def make_app(cfg, config_path: str | None = None):
     app = FastAPI(title="tts")
     app.state.config_dir = config_dir
     eng.init(cfg, base_dir=config_dir)
+    eng.warmup()
 
     sd = cfg.get(
         "sounds_dir",
@@ -626,7 +628,8 @@ def make_app(cfg, config_path: str | None = None):
     @r.post("/tts", dependencies=[need("tts")])
     async def tts_post(req: Request):
         j = await req.json()
-        b, m, h = eng.tts(j)
+        # offload blocking synth so concurrent sentences pipeline
+        b, m, h = await anyio.to_thread.run_sync(eng.tts, j)
         return Response(content=b, media_type=m, headers=h)
 
     @r.get("/tts", dependencies=[need("tts")])
