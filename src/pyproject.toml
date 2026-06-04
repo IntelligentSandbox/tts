@@ -17,10 +17,14 @@ dependencies = [
     "kokoro>=0.9.4",
     "soundfile>=0.13.0",
     "pedalboard>=0.9.22",
+    "echo-common",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+echo-common = { git = "ssh://git@github.com/ramonics/echo.git", subdirectory = "services/common" }
 
 [tool.ruff]
 line-length = 88

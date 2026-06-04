@@ -3,7 +3,7 @@ import random
 import re
 import unicodedata
 
-from util import resolve_path
+from echo_common import resolve_path
 
 _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
 

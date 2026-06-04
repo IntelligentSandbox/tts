@@ -9,19 +9,8 @@ from log import logger
 ROLES = ["admin", "mod", "tts", "push", "pull", "overlay"]
 DEFAULT_SECRETS = os.path.join(os.path.dirname(__file__), "private", "secrets.yaml")
 
-_POSSIBLE_PATHS = [
-    os.path.join(os.path.dirname(__file__), "private", "config.yaml"),
-    os.path.join(os.path.dirname(__file__), "config.yaml"),
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml"),
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "private", "config.yaml"),
-    os.path.join(os.getcwd(), "config.yaml"),
-]
-
-_CFG_DIR = os.path.dirname(DEFAULT_SECRETS)
-for _p in _POSSIBLE_PATHS:
-    if os.path.exists(_p):
-        _CFG_DIR = os.path.dirname(_p)
-        break
+# relative secret paths resolve against the service root
+_CFG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TOKEN_LEN = 32
 SECRET_LEN = 48

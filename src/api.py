@@ -14,6 +14,8 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from echo_common import resolve_path, service_root
+
 import db
 import mod
 import secrets_util as sec
@@ -24,6 +26,8 @@ app: FastAPI
 Q: deque
 
 MAX_SOUNDS = 10
+
+SERVICE_ROOT = service_root(__file__)
 
 
 ROLE_TREE = {
@@ -108,36 +112,8 @@ def make_app(cfg, config_path: str | None = None):
     global app, Q
     Q = deque(maxlen=256)
 
-    # derive base dir from provided config_path when available
-    config_dir = None
-
-    if config_path:
-        try:
-            config_dir = os.path.dirname(os.path.abspath(config_path))
-        except Exception:
-            config_dir = None
-    else:
-        possible = [
-            os.getenv("CFG") or "",
-            os.path.join(os.path.dirname(__file__), "private", "config.yaml"),
-            os.path.join(os.path.dirname(__file__), "config.yaml"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.yaml"),
-            os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "private", "config.yaml"
-            ),
-            os.path.join(os.getcwd(), "config.yaml"),
-        ]
-
-        for p in possible:
-            if not p:
-                continue
-
-            try:
-                if os.path.exists(p):
-                    config_dir = os.path.dirname(os.path.abspath(p))
-                    break
-            except Exception:
-                continue
+    # all relative config paths resolve against the service root
+    config_dir = SERVICE_ROOT
 
     app = FastAPI(title="tts")
     app.state.config_dir = config_dir
@@ -166,12 +142,7 @@ def make_app(cfg, config_path: str | None = None):
         secrets_file, base_dir=config_dir
     )
 
-    db.init_db(
-        cfg.get(
-            "db_file",
-            os.path.join(os.path.dirname(__file__), "private", "data", "tts.db"),
-        )
-    )
+    db.init_db(resolve_path(cfg.get("db_file", "data/tts.db"), SERVICE_ROOT))
 
     app.state.jwt_secret = cfg.get("jwt_secret") or sec.ensure_jwt_secret(
         secrets_file, base_dir=config_dir
