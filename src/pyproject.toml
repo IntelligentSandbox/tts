@@ -36,8 +36,11 @@ select = ["E", "F", "I"]
 quote-style = "double"
 indent-style = "space"
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 files = ["."]
 ignore_missing_imports = true
 implicit_optional = true
@@ -48,5 +51,7 @@ exclude = ["tts-venv/"]
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
     "ruff>=0.15.12",
 ]
