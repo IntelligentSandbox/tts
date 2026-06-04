@@ -1,6 +1,6 @@
-# paths resolve relative to this file. piper voices live in <voices_dir>/piper/, kokoro downloads on demand
-voices_dir: ../../voices
-sounds_dir: ../../sounds
+# paths resolve relative to the service root. piper voices live in <voices_dir>/piper/, kokoro downloads on demand
+voices_dir: voices
+sounds_dir: sounds
 
 # mp3 | wav
 default_format: mp3
@@ -15,7 +15,11 @@ max_sfx_per_request: 10
 # "*" or comma-separated list of origins
 cors_allow_origins: "*"
 
-db_file: ./data/tts.db
+server:
+  host: "0.0.0.0"
+  port: 47100
+
+db_file: data/tts.db
 
 # short prefixes mapped to voice ids, e.g. "ryan: hello" -> en_US-ryan-high
 aliases: {}
@@ -37,14 +41,14 @@ moderation:
   strip_urls: true
   strip_emojis: true
   censor_slurs: true
-  blocklist_path: ./mod_blocklist.txt
+  blocklist_path: src/private/mod_blocklist.txt
 
 auth:
   enabled: true
-  file: ./secrets.yaml
+  file: src/private/secrets.yaml
 
 session:
-  file: ./secrets.yaml
+  file: src/private/secrets.yaml
   # lax | strict | none
   same_site: lax
   # true when serving over HTTPS

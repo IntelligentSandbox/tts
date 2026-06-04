@@ -17,8 +17,8 @@ import mod
 import secrets_util as sec
 import sfx
 import voice_fx
+from echo_common import resolve_path
 from log import logger
-from util import resolve_path
 
 cfg: dict = {}
 vc: dict = {}
