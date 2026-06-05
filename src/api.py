@@ -39,6 +39,18 @@ ROLE_TREE = {
 }
 
 
+def _apply_role(session, role):
+    if role == "admin":
+        session["admin"] = True
+        session["mod"] = True
+        session["tts"] = True
+        session["push"] = True
+        session["pull"] = True
+    elif role == "mod":
+        session["mod"] = True
+        session["tts"] = True
+
+
 def _eff_from_session(req):
     eff = set()
 
@@ -257,10 +269,7 @@ def make_app(cfg, config_path: str | None = None):
             return Response(content=b, media_type=m, headers=h)
         finally:
             for pth in rm:
-                try:
-                    os.remove(pth)
-                except Exception:
-                    pass
+                eng._rm(pth)
 
     @r.get("/peek", dependencies=[need("mod")])
     def peek():
@@ -313,16 +322,7 @@ def make_app(cfg, config_path: str | None = None):
         if not eng.auth_ok(role, key):
             raise HTTPException(401, "invalid key")
 
-        if role == "admin":
-            req.session["admin"] = True
-            req.session["mod"] = True
-            req.session["tts"] = True
-            req.session["push"] = True
-            req.session["pull"] = True
-        else:
-            req.session["mod"] = True
-            req.session["tts"] = True
-
+        _apply_role(req.session, role)
         return {"ok": True, "role": role}
 
     # OAuth: initiate login with provider (e.g., twitch)
@@ -463,15 +463,8 @@ def make_app(cfg, config_path: str | None = None):
         )
         role = mapped.get(str(twitch_id)) or mapped.get((login or "").lower())
 
-        if role == "admin":
-            request.session["admin"] = True
-            request.session["mod"] = True
-            request.session["tts"] = True
-            request.session["push"] = True
-            request.session["pull"] = True
-        elif role == "mod":
-            request.session["mod"] = True
-            request.session["tts"] = True
+        if role in ("admin", "mod"):
+            _apply_role(request.session, role)
         else:
             # unmapped: show simple HTML telling user to ask admin to map their account
             text = (
