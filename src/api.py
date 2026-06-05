@@ -8,13 +8,12 @@ from collections import deque
 import anyio
 import jwt
 import requests
+from echo_common import resolve_path, service_root
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-
-from echo_common import resolve_path, service_root
 
 import db
 import mod
@@ -249,7 +248,10 @@ def make_app(cfg, config_path: str | None = None):
             b, m = eng._concat_wavs(segs, fmt=fmt, bitrate=j.get("bitrate"))
             rid = uuid.uuid4().hex[:8]
             h = {
-                "Content-Disposition": f'inline; filename="batch-{rid}.{"mp3" if m == "audio/mpeg" else "wav"}"',
+                "Content-Disposition": (
+                    f'inline; filename="batch-{rid}.'
+                    f'{"mp3" if m == "audio/mpeg" else "wav"}"'
+                ),
                 "Cache-Control": "no-store",
             }
             return Response(content=b, media_type=m, headers=h)
@@ -472,7 +474,11 @@ def make_app(cfg, config_path: str | None = None):
             request.session["tts"] = True
         else:
             # unmapped: show simple HTML telling user to ask admin to map their account
-            text = f"<html><body>Login OK (user={login}). Account not mapped to a role. Ask an admin to map your Twitch id {twitch_id} to a role.</body></html>"
+            text = (
+                f"<html><body>Login OK (user={login}). Account not mapped to a role."
+                f" Ask an admin to map your Twitch id {twitch_id}"
+                " to a role.</body></html>"
+            )
             return HTMLResponse(text)
 
         return Response(status_code=302, headers={"Location": "/"})
