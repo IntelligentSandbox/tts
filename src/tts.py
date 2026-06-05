@@ -12,12 +12,12 @@ import uuid
 import wave
 
 from cachetools import TTLCache
+from echo_common import resolve_path
 
 import mod
 import secrets_util as sec
 import sfx
 import voice_fx
-from echo_common import resolve_path
 from log import logger
 
 cfg: dict = {}
@@ -264,9 +264,7 @@ def _scan():
                 "sample_rate", meta.get("audio", {}).get("sample_rate", 22050)
             ),
             "speakers": len(meta.get("speakers", [0])),
-            "language": meta.get(
-                "language", meta.get("espeak", {}).get("voice", "")
-            ),
+            "language": meta.get("language", meta.get("espeak", {}).get("voice", "")),
         }
 
     vc = v
@@ -733,7 +731,9 @@ def health():
     return {
         "ok": True,
         "backends": sorted({v.get("backend") for v in vc.values() if v.get("backend")}),
-        "piper": "resident" if _piper_resident() and _piper_voices else shutil.which(cfg.get("piper_bin", "piper")) or None,
+        "piper": "resident"
+        if _piper_resident() and _piper_voices
+        else shutil.which(cfg.get("piper_bin", "piper")) or None,
         "ffmpeg": shutil.which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
         "max_concurrency": int(cfg.get("max_concurrency", 2)),
