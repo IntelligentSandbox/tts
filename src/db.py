@@ -43,6 +43,28 @@ def init_db(path):
     _conn.commit()
 
 
+def _token_row(r):
+    return {
+        "jti": r["jti"],
+        "roles": json.loads(r["roles"]),
+        "expires": r["expires"],
+        "created_by": r["created_by"],
+        "created_at": r["created_at"],
+        "revoked": bool(r["revoked"]),
+        "note": r["note"],
+    }
+
+
+def _embed_row(r):
+    return {
+        "embed_id": r["embed_id"],
+        "jti": r["jti"],
+        "created_at": r["created_at"],
+        "note": r["note"],
+        "origin": r["origin"],
+    }
+
+
 def insert_token(jti, roles, expires, created_by, created_at, note=""):
     """Insert a token."""
     if _conn is None:
@@ -66,15 +88,7 @@ def get_token(jti):
     if not r:
         return None
 
-    return {
-        "jti": r["jti"],
-        "roles": json.loads(r["roles"]),
-        "expires": r["expires"],
-        "created_by": r["created_by"],
-        "created_at": r["created_at"],
-        "revoked": bool(r["revoked"]),
-        "note": r["note"],
-    }
+    return _token_row(r)
 
 
 def list_tokens():
@@ -87,17 +101,7 @@ def list_tokens():
     out = []
 
     for r in rows:
-        out.append(
-            {
-                "jti": r["jti"],
-                "roles": json.loads(r["roles"]),
-                "expires": r["expires"],
-                "created_by": r["created_by"],
-                "created_at": r["created_at"],
-                "revoked": bool(r["revoked"]),
-                "note": r["note"],
-            }
-        )
+        out.append(_token_row(r))
 
     return out
 
@@ -137,13 +141,7 @@ def get_embed(embed_id):
     if not r:
         return None
 
-    return {
-        "embed_id": r["embed_id"],
-        "jti": r["jti"],
-        "created_at": r["created_at"],
-        "note": r["note"],
-        "origin": r["origin"],
-    }
+    return _embed_row(r)
 
 
 def delete_embed(embed_id):
@@ -164,14 +162,6 @@ def list_embeds():
     out = []
 
     for r in rows:
-        out.append(
-            {
-                "embed_id": r["embed_id"],
-                "jti": r["jti"],
-                "created_at": r["created_at"],
-                "note": r["note"],
-                "origin": r["origin"],
-            }
-        )
+        out.append(_embed_row(r))
 
     return out

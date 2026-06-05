@@ -28,6 +28,7 @@ aliases: dict = {}
 presets: dict = {}
 cache = None
 _auth: dict = {"enabled": False, "keys": {}}
+_ffmpeg: str | None = None
 _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
 
 # trim leading and trailing silence so segments sit flush
@@ -132,8 +133,9 @@ def _kokoro_pipeline(voice_id):
 
 
 def init(c, base_dir: str | None = None):
-    global cfg, sem, cache, aliases, presets, _auth
+    global cfg, sem, cache, aliases, presets, _auth, _ffmpeg
     cfg = c
+    _ffmpeg = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
     if base_dir:
         try:
@@ -187,10 +189,7 @@ def warmup():
             _piper_synth(piper[0], "warming up", of.name, None, None, None, None)
             logger.info(f"[warmup] piper voice ready: {piper[0]['id']}")
         finally:
-            try:
-                os.remove(of.name)
-            except Exception:
-                pass
+            _rm(of.name)
     except Exception as e:
         logger.warning(f"[warmup] failed: {e}")
 
@@ -354,19 +353,24 @@ def _parse_speed_modifier(s):
     return clean, multiplier
 
 
+def _rm(p):
+    try:
+        os.remove(p)
+    except Exception:
+        pass
+
+
 def _norm(w):
     if not bool(cfg.get("normalize", False)):
         return w
 
-    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
-
-    if not f:
+    if not _ffmpeg:
         return w
 
     n = w + ".norm.wav"
     r = subprocess.run(
         [
-            f,
+            _ffmpeg,
             "-y",
             "-loglevel",
             "error",
@@ -384,15 +388,13 @@ def _norm(w):
 
 
 def _mp3(w, br):
-    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
-
-    if not f:
+    if not _ffmpeg:
         return b""
 
     m = w + ".mp3"
     r = subprocess.run(
         [
-            f,
+            _ffmpeg,
             "-y",
             "-loglevel",
             "error",
@@ -412,12 +414,7 @@ def _mp3(w, br):
         return b""
 
     b = open(m, "rb").read()
-
-    try:
-        os.remove(m)
-    except Exception:
-        pass
-
+    _rm(m)
     return b
 
 
@@ -447,9 +444,17 @@ def _kokoro_synth(txt, vid, ls, out_path):
     sf.write(out_path, full, KOKORO_SR, subtype="PCM_16")
 
 
+def _synth(info, txt, vid, ls, ns, nw, spk, out_path):
+    if (info or {}).get("backend") == "kokoro":
+        with sem:
+            _kokoro_synth(txt, vid, ls, out_path)
+    else:
+        with sem:
+            _piper_synth(info, txt, out_path, ls, ns, nw, spk)
+
+
 def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     info = _vinfo(vid)
-    is_kokoro = (info or {}).get("backend") == "kokoro"
 
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
@@ -457,12 +462,7 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
     rm = [of.name]
 
     try:
-        if is_kokoro:
-            with sem:
-                _kokoro_synth(txt, vid, ls, of.name)
-        else:
-            with sem:
-                _piper_synth(info, txt, of.name, ls, ns, nw, spk)
+        _synth(info, txt, vid, ls, ns, nw, spk, of.name)
 
         fx = voice_fx.process_wav(of.name, voice_id=vid)
 
@@ -490,10 +490,7 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
 
     finally:
         for p in rm:
-            try:
-                os.remove(p)
-            except Exception:
-                pass
+            _rm(p)
 
     if not b or len(b) <= 44:
         raise RuntimeError("empty audio")
@@ -721,19 +718,18 @@ def _tts_with_sfx(
 
     finally:
         for pth in rm:
-            try:
-                os.remove(pth)
-            except Exception:
-                pass
+            _rm(pth)
 
 
 def health():
     return {
         "ok": True,
         "backends": sorted({v.get("backend") for v in vc.values() if v.get("backend")}),
-        "piper": "resident"
-        if _piper_resident() and _piper_voices
-        else shutil.which(cfg.get("piper_bin", "piper")) or None,
+        "piper": (
+            "resident"
+            if _piper_resident() and _piper_voices
+            else shutil.which(cfg.get("piper_bin", "piper")) or None
+        ),
         "ffmpeg": shutil.which(cfg.get("ffmpeg_bin", "ffmpeg")) or None,
         "voices": len(vc) or len(voices()),
         "max_concurrency": int(cfg.get("max_concurrency", 2)),
@@ -779,19 +775,12 @@ def del_alias(n):
 
 def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
     info = _vinfo(vid) or vc[_default_voice_id()]
-    is_kokoro = (info or {}).get("backend") == "kokoro"
 
     of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     of.close()
 
     try:
-        if is_kokoro:
-            with sem:
-                _kokoro_synth(txt, vid, ls, of.name)
-        else:
-            with sem:
-                _piper_synth(info, txt, of.name, ls, ns, nw, spk)
-
+        _synth(info, txt, vid, ls, ns, nw, spk, of.name)
         fx = voice_fx.process_wav(of.name, voice_id=vid)
         src = _norm(fx) if norm else fx
 
@@ -806,24 +795,18 @@ def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
         return src, [of.name] + extra
 
     except:
-        try:
-            os.remove(of.name)
-        except Exception:
-            pass
-
+        _rm(of.name)
         raise
 
 
 def _to_mono_wav(inp, sample_rate=48000, trim=False, gain_db=0):
-    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
-
-    if not f:
+    if not _ffmpeg:
         return inp
 
     out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     out.close()
 
-    cmd = [f, "-y", "-loglevel", "error", "-i", inp]
+    cmd = [_ffmpeg, "-y", "-loglevel", "error", "-i", inp]
 
     af = []
 
@@ -844,9 +827,7 @@ def _to_mono_wav(inp, sample_rate=48000, trim=False, gain_db=0):
 
 
 def _concat_wavs(paths, fmt="mp3", bitrate=None):
-    f = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
-
-    if not f:
+    if not _ffmpeg:
         raise RuntimeError("ffmpeg not found")
 
     lst = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
@@ -861,7 +842,7 @@ def _concat_wavs(paths, fmt="mp3", bitrate=None):
 
     r = subprocess.run(
         [
-            f,
+            _ffmpeg,
             "-y",
             "-loglevel",
             "error",
