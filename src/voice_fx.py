@@ -18,7 +18,7 @@ from pedalboard import (
 )
 from pedalboard.io import AudioFile
 
-from log import logger
+from echo_common import logger
 
 _cfg: dict = {}
 _default_board = None
