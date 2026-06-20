@@ -194,6 +194,34 @@ def warmup():
         logger.warning(f"[warmup] failed: {e}")
 
 
+def warmup_voice(voice_id):
+    """Preload a specific voice by id or alias so its first request is hot."""
+    vid, _ = _resolve_voice_id(voice_id)
+    info = _vinfo(vid)
+
+    if not info:
+        return False
+
+    backend = info.get("backend")
+
+    if backend == "piper" and not _piper_resident():
+        return False
+
+    try:
+        of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        of.close()
+
+        try:
+            _synth(info, "warming up", vid, None, None, None, None, of.name)
+            logger.info(f"[warmup] voice ready: {info['id']} ({backend})")
+            return True
+        finally:
+            _rm(of.name)
+    except Exception as e:
+        logger.warning(f"[warmup] failed for {voice_id}: {e}")
+        return False
+
+
 def auth_enabled():
     return bool(_auth.get("enabled"))
 

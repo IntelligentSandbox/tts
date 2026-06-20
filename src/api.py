@@ -574,6 +574,17 @@ def make_app(cfg, config_path: str | None = None):
     def reload_voices():
         return {"reloaded": eng.reload()}
 
+    @r.post("/warmup", dependencies=[need("tts")])
+    async def warmup_voice(req: Request):
+        j = await req.json()
+        voice_id = (j.get("voice") or "").strip()
+
+        if not voice_id:
+            raise HTTPException(400, "voice required")
+
+        ok = eng.warmup_voice(voice_id)
+        return {"warmed": ok, "voice": voice_id}
+
     @r.get("/aliases", dependencies=[need("admin")])
     def get_aliases():
         return eng.get_aliases()
