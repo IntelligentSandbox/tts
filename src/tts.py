@@ -18,7 +18,7 @@ import mod
 import secrets_util as sec
 import sfx
 import voice_fx
-from log import logger
+from echo_common import logger
 
 cfg: dict = {}
 vc: dict = {}

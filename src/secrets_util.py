@@ -4,7 +4,7 @@ import stat
 
 import yaml
 
-from log import logger
+from echo_common import logger
 
 ROLES = ["admin", "mod", "tts", "push", "pull", "overlay"]
 DEFAULT_SECRETS = os.path.join(os.path.dirname(__file__), "private", "secrets.yaml")
