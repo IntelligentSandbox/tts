@@ -34,7 +34,7 @@ response = requests.post(
     "http://localhost:47100/api/tts",
     headers={"X-API-Key": "secret-key"},
     json={
-        "text": "Hello! [SFX: airhorn] Welcome.",
+        "text": "Hello! {airhorn} Welcome.",
         "voice": "en_US-ryan-high"
     }
 )

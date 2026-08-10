@@ -26,7 +26,7 @@ _leet = {
 
 _emoji: set = set()
 
-# TODO(393e): https://unicode.org/reports/tr51/tr51-12.html#Identification
+# TODO: https://unicode.org/reports/tr51/tr51-12.html#Identification
 with open(
     os.path.join(os.path.dirname(__file__), "assets", "emoji-data.txt"),
     encoding="utf-8",
@@ -236,7 +236,7 @@ class Moderator:
                     return _mask_token(src)
 
                 if mode in ("beep", "duck", "random"):
-                    return f"[SFX: {_censor_sound(src, mode)}]"
+                    return "{" + _censor_sound(src, mode) + "}"
 
                 return ""
 
