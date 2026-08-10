@@ -4,7 +4,7 @@ import re
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 SFX_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a")
 
-_sfx_re = re.compile(r"\[SFX:\s*([^\]]+)\]", re.IGNORECASE)
+_sfx_re = re.compile(r"\{([a-z0-9_-]+)\}", re.IGNORECASE)
 
 sfx_files: dict = {}
 sfx_aliases: dict = {}
@@ -82,7 +82,7 @@ def resolve_sfx(name, cfg):
 
 
 def parse_sfx_tags(text):
-    """Parse [SFX: name] tags into parts list."""
+    """Parse {name} tags into parts list."""
     parts = []
     last_end = 0
 

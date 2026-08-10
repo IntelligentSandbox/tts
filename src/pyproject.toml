@@ -2,7 +2,7 @@
 name = "tts"
 version = "0.1"
 description = "TTS service - Voice generation with Piper and Kokoro backends"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
@@ -16,7 +16,7 @@ dependencies = [
     "cachetools>=5.5.0",
     "kokoro>=0.9.4",
     "soundfile>=0.13.0",
-    "pedalboard>=0.9.22",
+    "pedalboard>=0.9.22,<0.9.24",
     "echo-common",
 ]
 
@@ -38,6 +38,8 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.13"

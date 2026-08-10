@@ -135,7 +135,7 @@ async function loadSounds() {
 }
 function parseParts(input, fallbackVoice) {
   const reVoice = /(^|\s)([a-z0-9_]+):\s*/gi
-  const reSfx = /\[sfx:\s*([a-z0-9_]+)\]/gi
+  const reSfx = /\{([a-z0-9_-]+)\}/gi
   const reSpeed = /\[(fast|slow)\]/gi
   const parts = []
   let curVoice = fallbackVoice || null
