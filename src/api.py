@@ -6,8 +6,8 @@ import uuid
 from collections import deque
 
 import anyio
+import httpx
 import jwt
-import requests
 from echo_common import resolve_path, service_root
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +25,7 @@ app: FastAPI
 Q: deque
 
 MAX_SOUNDS = 10
+OAUTH_TIMEOUT_SECONDS = 10.0
 
 SERVICE_ROOT = service_root(__file__)
 
@@ -396,21 +397,21 @@ def make_app(cfg, config_path: str | None = None):
         token_url = "https://id.twitch.tv/oauth2/token"
 
         try:
-            r = requests.post(
-                token_url,
-                data={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": redirect,
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
-            tok = r.json()
+            async with httpx.AsyncClient(timeout=OAUTH_TIMEOUT_SECONDS) as client:
+                r = await client.post(
+                    token_url,
+                    data={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": code,
+                        "grant_type": "authorization_code",
+                        "redirect_uri": redirect,
+                    },
+                )
+                r.raise_for_status()
+                tok = r.json()
         except Exception as e:
-            raise HTTPException(400, f"token exchange failed: {e}")
+            raise HTTPException(400, f"token exchange failed: {e}") from e
 
         access = tok.get("access_token")
 
@@ -419,18 +420,18 @@ def make_app(cfg, config_path: str | None = None):
 
         # get user info
         try:
-            hr = requests.get(
-                "https://api.twitch.tv/helix/users",
-                headers={
-                    "Authorization": f"Bearer {access}",
-                    "Client-Id": client_id,
-                },
-                timeout=10,
-            )
-            hr.raise_for_status()
-            u = hr.json()
+            async with httpx.AsyncClient(timeout=OAUTH_TIMEOUT_SECONDS) as client:
+                hr = await client.get(
+                    "https://api.twitch.tv/helix/users",
+                    headers={
+                        "Authorization": f"Bearer {access}",
+                        "Client-Id": client_id,
+                    },
+                )
+                hr.raise_for_status()
+                u = hr.json()
         except Exception as e:
-            raise HTTPException(400, f"user lookup failed: {e}")
+            raise HTTPException(400, f"user lookup failed: {e}") from e
 
         # extract id/login
         data = u.get("data") or []

@@ -12,12 +12,13 @@ dependencies = [
     "jupyter>=1.1.0",
     "openai-whisper>=20240930",
     "pyjwt>=2.9.0",
-    "requests>=2.32.0",
     "cachetools>=5.5.0",
     "kokoro>=0.9.4",
     "soundfile>=0.13.0",
     "pedalboard>=0.9.22,<0.9.24",
     "echo-common",
+    "anyio>=4.13.0",
+    "httpx>=0.28.1",
     "emoji>=2.15.0",
 ]
 
