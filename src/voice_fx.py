@@ -1,8 +1,10 @@
 """Post-synth voice effects chain (pedalboard)."""
 
+import contextlib
 import os
 import tempfile
 
+from echo_common import logger
 from pedalboard import (
     Bitcrush,
     Chorus,
@@ -18,11 +20,9 @@ from pedalboard import (
 )
 from pedalboard.io import AudioFile
 
-from echo_common import logger
-
-_cfg: dict = {}
+_cfg = {}
 _default_board = None
-_voice_boards: dict = {}
+_voice_boards = {}
 
 
 def init(cfg):
@@ -94,8 +94,8 @@ def process_wav(in_path, voice_id=None):
     if board is None or len(board) == 0:
         return in_path
 
-    out = tempfile.NamedTemporaryFile(suffix=".fx.wav", delete=False)
-    out.close()
+    fd, out_path = tempfile.mkstemp(suffix=".fx.wav")
+    os.close(fd)
 
     try:
         with AudioFile(in_path) as f:
@@ -104,16 +104,14 @@ def process_wav(in_path, voice_id=None):
 
         processed = board(audio, sr)
 
-        with AudioFile(out.name, "w", sr, processed.shape[0]) as fo:
+        with AudioFile(out_path, "w", sr, processed.shape[0]) as fo:
             fo.write(processed)
 
-        return out.name
+        return out_path
     except Exception as e:
         logger.warning(f"[voice_fx] process failed: {e}")
 
-        try:
-            os.remove(out.name)
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            os.remove(out_path)
 
         return in_path

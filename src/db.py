@@ -98,12 +98,7 @@ def list_tokens():
         "SELECT jti, roles, expires, created_by, created_at, revoked, note"
         " FROM tokens ORDER BY created_at DESC"
     ).fetchall()
-    out = []
-
-    for r in rows:
-        out.append(_token_row(r))
-
-    return out
+    return [_token_row(r) for r in rows]
 
 
 def revoke_token(jti):
@@ -159,9 +154,4 @@ def list_embeds():
         "SELECT embed_id, jti, created_at, note, origin"
         " FROM embeds ORDER BY created_at DESC"
     ).fetchall()
-    out = []
-
-    for r in rows:
-        out.append(_embed_row(r))
-
-    return out
+    return [_embed_row(r) for r in rows]

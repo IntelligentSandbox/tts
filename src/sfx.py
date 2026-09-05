@@ -6,8 +6,8 @@ SFX_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a")
 
 _sfx_re = re.compile(r"\{([a-z0-9_-]+)\}", re.IGNORECASE)
 
-sfx_files: dict = {}
-sfx_aliases: dict = {}
+sfx_files = {}
+sfx_aliases = {}
 
 
 def _scan_sounds(cfg):

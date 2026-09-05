@@ -1,5 +1,8 @@
 import { api } from './api.js'
 
+const POLL_IDLE_MS = 600
+const POLL_ACTIVE_MS = 400
+
 let ALIAS_SET = new Set()
 let SFX_MAP = {}
 
@@ -20,7 +23,6 @@ function payload(text, voice) {
     preset: byId('preset')?.value || null,
     length_scale: numOrNull('length_scale'),
     noise_w: numOrNull('noise_w'),
-    sentence_silence: numOrNull('sentence_silence'),
     speaker_id: numOrNull('speaker_id')
   }
 }
@@ -202,7 +204,6 @@ async function playText(fullText, fallbackVoice, statusEl) {
           preset: byId('preset')?.value || null,
           length_scale: ls,
           noise_w: numOrNull('noise_w'),
-          sentence_silence: numOrNull('sentence_silence'),
           speaker_id: numOrNull('speaker_id')
         }
     const res = single ? await api.tts(body) : await api.ttsBatch(body)
@@ -246,7 +247,7 @@ async function addRow(text, voice, jobId, opts = {}) {
 }
 
 async function pollQueue() {
-  if (!byId('pollq').checked) return setTimeout(pollQueue, 600)
+  if (!byId('pollq').checked) return setTimeout(pollQueue, POLL_IDLE_MS)
   try {
     const job = await api.queue.peek()
     const v = job.voice || byId('voices').value || null
@@ -254,7 +255,7 @@ async function pollQueue() {
     const id = job.id || null
     if (t) await addRow(t, v, id, { allowAutoplay: false })
   } catch {}
-  setTimeout(pollQueue, 400)
+  setTimeout(pollQueue, POLL_ACTIVE_MS)
 }
 
 document.addEventListener('click', async (e) => {
@@ -363,7 +364,6 @@ async function handleMintToken() {
   const out = byId('mint_result')
   try {
     const res = await api.overlay.embed({ ttl, roles, origin: originVal })
-    const embed = location.origin + res.url
     const eid = res.embed_id || new URL(res.url, location.origin).searchParams.get('embed')
     const masked = location.origin + '/api/overlay?embed=' + (eid ? eid.slice(0, 6) + '***' : '***')
     const entry = document.createElement('div')

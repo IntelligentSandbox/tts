@@ -6,8 +6,8 @@ import uuid
 from collections import deque
 
 import anyio
+import httpx
 import jwt
-import requests
 from echo_common import resolve_path, service_root
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,10 +21,8 @@ import secrets_util as sec
 import sfx
 import tts as eng
 
-app: FastAPI
-Q: deque
-
 MAX_SOUNDS = 10
+OAUTH_TIMEOUT_SECONDS = 10.0
 
 SERVICE_ROOT = service_root(__file__)
 
@@ -65,8 +63,6 @@ def _eff_from_key(k):
     if not k:
         return set()
 
-    import tts as eng
-
     eff = set()
 
     for r, grants in ROLE_TREE.items():
@@ -78,8 +74,6 @@ def _eff_from_key(k):
 
 def need(role):
     async def dep(req: Request):
-        import tts as eng
-
         if not eng.auth_enabled():
             return
 
@@ -98,7 +92,7 @@ def need(role):
             try:
                 pl = jwt.decode(k, req.app.state.jwt_secret, algorithms=["HS256"])
             except jwt.ExpiredSignatureError:
-                raise HTTPException(401, "token expired")
+                raise HTTPException(401, "token expired") from None
             except Exception:
                 pl = None
 
@@ -119,7 +113,7 @@ def need(role):
     return Depends(dep)
 
 
-def make_app(cfg, config_path: str | None = None):
+def make_app(cfg):
     global app, Q
     Q = deque(maxlen=256)
 
@@ -168,21 +162,16 @@ def make_app(cfg, config_path: str | None = None):
     )
 
     ori = cfg.get("cors_allow_origins", "*")
+    allow_origins = (
+        ["*"] if ori == "*" else [s.strip() for s in ori.split(",") if s.strip()]
+    )
 
-    if ori == "*":
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-    else:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=[s.strip() for s in ori.split(",") if s.strip()],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     r = APIRouter(prefix="/api")
 
@@ -212,11 +201,13 @@ def make_app(cfg, config_path: str | None = None):
             else eng.cfg.get("normalize", False)
         )
 
-        ls = j.get("length_scale")
-        ns = j.get("noise_scale")
-        nw = j.get("noise_w")
-        ss = j.get("sentence_silence")
-        spk = j.get("speaker_id")
+        synth = {
+            "length_scale": j.get("length_scale"),
+            "noise_scale": j.get("noise_scale"),
+            "noise_w": j.get("noise_w"),
+            "speaker_id": j.get("speaker_id"),
+            "normalize": norm,
+        }
 
         segs, rm, sfx_count = [], [], 0
         try:
@@ -245,7 +236,8 @@ def make_app(cfg, config_path: str | None = None):
 
                     reqv = (p.get("voice") or "").strip()
                     vid, _ = eng._resolve_voice_id(reqv)
-                    wav, tmp = eng._render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm)
+                    params = eng.SynthParams(voice_id=vid, **synth)
+                    wav, tmp = eng._render_tts_wav(txt, params)
                     rm += tmp
 
                     wav48 = eng._to_mono_wav(wav, trim=True)
@@ -307,8 +299,6 @@ def make_app(cfg, config_path: str | None = None):
 
     @r.post("/panel/login")
     async def panel_login(req: Request):
-        import tts as eng
-
         if not eng.auth_enabled():
             raise HTTPException(400, "auth disabled")
 
@@ -364,7 +354,6 @@ def make_app(cfg, config_path: str | None = None):
     async def auth_callback(
         request: Request,
         code: str | None = None,
-        state: str | None = None,
         provider: str = "twitch",
     ):
         # exchange code for token and fetch user identity
@@ -396,21 +385,21 @@ def make_app(cfg, config_path: str | None = None):
         token_url = "https://id.twitch.tv/oauth2/token"
 
         try:
-            r = requests.post(
-                token_url,
-                data={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": redirect,
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
-            tok = r.json()
+            async with httpx.AsyncClient(timeout=OAUTH_TIMEOUT_SECONDS) as client:
+                r = await client.post(
+                    token_url,
+                    data={
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "code": code,
+                        "grant_type": "authorization_code",
+                        "redirect_uri": redirect,
+                    },
+                )
+                r.raise_for_status()
+                tok = r.json()
         except Exception as e:
-            raise HTTPException(400, f"token exchange failed: {e}")
+            raise HTTPException(400, f"token exchange failed: {e}") from e
 
         access = tok.get("access_token")
 
@@ -419,18 +408,18 @@ def make_app(cfg, config_path: str | None = None):
 
         # get user info
         try:
-            hr = requests.get(
-                "https://api.twitch.tv/helix/users",
-                headers={
-                    "Authorization": f"Bearer {access}",
-                    "Client-Id": client_id,
-                },
-                timeout=10,
-            )
-            hr.raise_for_status()
-            u = hr.json()
+            async with httpx.AsyncClient(timeout=OAUTH_TIMEOUT_SECONDS) as client:
+                hr = await client.get(
+                    "https://api.twitch.tv/helix/users",
+                    headers={
+                        "Authorization": f"Bearer {access}",
+                        "Client-Id": client_id,
+                    },
+                )
+                hr.raise_for_status()
+                u = hr.json()
         except Exception as e:
-            raise HTTPException(400, f"user lookup failed: {e}")
+            raise HTTPException(400, f"user lookup failed: {e}") from e
 
         # extract id/login
         data = u.get("data") or []
@@ -621,13 +610,12 @@ def make_app(cfg, config_path: str | None = None):
         length_scale: float | None = None,
         noise_scale: float | None = None,
         noise_w: float | None = None,
-        sentence_silence: float | None = None,
         normalize: bool | None = None,
         bitrate: str | None = None,
         speaker_id: int | None = None,
         preset: str | None = None,
     ):
-        q = {k: v for k, v in locals().items()}
+        q = dict(locals().items())
         b, m, h = eng.tts(q)
         return Response(content=b, media_type=m, headers=h)
 
@@ -640,7 +628,7 @@ def make_app(cfg, config_path: str | None = None):
         try:
             j = await req.json()
         except Exception:
-            raise HTTPException(400, "invalid json")
+            raise HTTPException(400, "invalid json") from None
 
         t = (j.get("text") or "").strip()
 
@@ -655,8 +643,6 @@ def make_app(cfg, config_path: str | None = None):
         j["text"] = t
 
         # assign id for deletion
-        import uuid
-
         j["id"] = j.get("id") or uuid.uuid4().hex[:8]
         Q.append(j)
         return {"ok": True, "id": j["id"], "queued": len(Q)}
@@ -675,14 +661,12 @@ def make_app(cfg, config_path: str | None = None):
 
     @r.get("/overlay")
     def overlay(req: Request, embed: str | None = None):
-        from fastapi.responses import HTMLResponse
-
         p = os.path.join(os.getcwd(), "public", "overlay.html")
 
         if not os.path.isfile(p):
             raise HTTPException(404, "overlay not found")
 
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             html = f.read()
 
         if not embed:
@@ -771,18 +755,16 @@ def make_app(cfg, config_path: str | None = None):
     @r.get("/overlay/tokens", dependencies=[need("admin")])
     def overlay_list_tokens():
         toks = db.list_tokens()
-        out = []
-
-        for t in toks:
-            out.append(
-                {
-                    "jti": t["jti"][:6] + "...",
-                    "roles": t["roles"],
-                    "expires": t["expires"],
-                    "revoked": bool(t["revoked"]),
-                    "note": t["note"],
-                }
-            )
+        out = [
+            {
+                "jti": t["jti"][:6] + "...",
+                "roles": t["roles"],
+                "expires": t["expires"],
+                "revoked": bool(t["revoked"]),
+                "note": t["note"],
+            }
+            for t in toks
+        ]
 
         return {"tokens": out}
 
@@ -874,7 +856,7 @@ def make_app(cfg, config_path: str | None = None):
         try:
             return mod.mod_set_mode(j.get("mode"))
         except ValueError:
-            raise HTTPException(400, "bad mode")
+            raise HTTPException(400, "bad mode") from None
 
     @r.get("/mod/test", dependencies=[need("mod")])
     def modtest(text: str):

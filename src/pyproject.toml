@@ -9,28 +9,42 @@ dependencies = [
     "pyyaml>=6.0.0",
     "itsdangerous>=2.2.0",
     "piper-tts>=1.2.0",
-    "jupyter>=1.1.0",
-    "openai-whisper>=20240930",
     "pyjwt>=2.9.0",
-    "requests>=2.32.0",
     "cachetools>=5.5.0",
     "kokoro>=0.9.4",
     "soundfile>=0.13.0",
     "pedalboard>=0.9.22,<0.9.24",
     "echo-common",
+    "anyio>=4.13.0",
+    "httpx>=0.28.1",
+    "emoji>=2.15.0",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-echo-common = { git = "ssh://git@github.com/ramonlabs/echo.git", subdirectory = "services/common" }
+echo-common = { workspace = true }
 
 [tool.ruff]
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "ARG", "RUF", "PIE", "TRY", "PERF", "PLR2004"]
+ignore = ["RUF001", "RUF010", "TRY003", "TRY300", "TRY301"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG", "RUF012", "PLR2004"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Query",
+]
 
 [tool.ruff.format]
 quote-style = "double"
