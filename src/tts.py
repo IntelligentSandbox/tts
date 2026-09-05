@@ -1,3 +1,4 @@
+import contextlib
 import glob
 import hmac
 import json
@@ -10,25 +11,26 @@ import threading
 import time
 import uuid
 import wave
+from dataclasses import dataclass
+from pathlib import Path
 
 from cachetools import TTLCache
-from echo_common import resolve_path
+from echo_common import logger, resolve_path
 
 import mod
 import secrets_util as sec
 import sfx
 import voice_fx
-from echo_common import logger
 
-cfg: dict = {}
-vc: dict = {}
+cfg = {}
+vc = {}
 scanned = False
 sem = None
-aliases: dict = {}
-presets: dict = {}
+aliases = {}
+presets = {}
 cache = None
-_auth: dict = {"enabled": False, "keys": {}}
-_ffmpeg: str | None = None
+_auth = {"enabled": False, "keys": {}}
+_ffmpeg = None
 _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
 
 # trim leading and trailing silence so segments sit flush
@@ -74,11 +76,12 @@ KOKORO_VOICES = [
     "bm_lewis",
 ]
 KOKORO_SR = 24000
+WAV_HEADER_BYTES = 44
 
-_kokoro_pipelines: dict = {}
+_kokoro_pipelines = {}
 _kokoro_lock = threading.Lock()
 
-_piper_voices: dict = {}
+_piper_voices = {}
 _piper_lock = threading.Lock()
 
 
@@ -132,7 +135,7 @@ def _kokoro_pipeline(voice_id):
         return p
 
 
-def init(c, base_dir: str | None = None):
+def init(c, base_dir=None):
     global cfg, sem, cache, aliases, presets, _auth, _ffmpeg
     cfg = c
     _ffmpeg = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
@@ -182,14 +185,13 @@ def warmup():
         return
 
     try:
-        of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        of.close()
+        of_path = _temp_path(".wav")
 
         try:
-            _piper_synth(piper[0], "warming up", of.name, None, None, None, None)
+            _piper_synth(piper[0], "warming up", of_path, None, None, None, None)
             logger.info(f"[warmup] piper voice ready: {piper[0]['id']}")
         finally:
-            _rm(of.name)
+            _rm(of_path)
     except Exception as e:
         logger.warning(f"[warmup] failed: {e}")
 
@@ -208,15 +210,14 @@ def warmup_voice(voice_id):
         return False
 
     try:
-        of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        of.close()
+        of_path = _temp_path(".wav")
 
         try:
-            _synth(info, "warming up", vid, None, None, None, None, of.name)
+            _synth(info, "warming up", SynthParams(voice_id=vid), of_path)
             logger.info(f"[warmup] voice ready: {info['id']} ({backend})")
             return True
         finally:
-            _rm(of.name)
+            _rm(of_path)
     except Exception as e:
         logger.warning(f"[warmup] failed for {voice_id}: {e}")
         return False
@@ -278,7 +279,7 @@ def _scan():
 
         i = os.path.splitext(os.path.basename(m))[0]
         try:
-            meta = json.load(open(j, "r", encoding="utf-8"))
+            meta = json.loads(Path(j).read_text(encoding="utf-8"))
         except Exception:
             meta = {}
 
@@ -381,11 +382,87 @@ def _parse_speed_modifier(s):
     return clean, multiplier
 
 
+@dataclass
+class SynthParams:
+    """The resolved voice and encoding settings for one request."""
+
+    voice_id: str
+    length_scale: float | None = None
+    noise_scale: float | None = None
+    noise_w: float | None = None
+    speaker_id: int | None = None
+    fmt: str = "mp3"
+    normalize: bool = False
+    bitrate: str = "128k"
+
+    def cache_key(self, text, preset):
+        return (
+            self.voice_id,
+            text,
+            self.fmt,
+            self.length_scale,
+            self.noise_scale,
+            self.noise_w,
+            self.speaker_id,
+            self.normalize,
+            self.bitrate,
+            preset,
+        )
+
+
+@dataclass
+class RequestMeta:
+    """What the response headers need beyond the synth settings."""
+
+    request_id: str
+    text: str
+    preset: str
+    mod_flags: dict
+    requested_voice: str | None
+    used_fallback: bool
+    started_at: float
+
+    def elapsed_ms(self):
+        return int((time.time() - self.started_at) * 1000)
+
+
+def _resp_headers(params, meta, mime, cached, duration_ms, extra=None):
+    ext = "mp3" if mime == "audio/mpeg" else "wav"
+
+    h = {
+        "X-Req-Id": meta.request_id,
+        "X-Voice": params.voice_id,
+        "X-Format": mime,
+        "X-Cache": "hit" if cached else "miss",
+        "X-Text-Chars": str(len(meta.text)),
+        "X-Duration-MS": str(duration_ms),
+        "X-Preset": meta.preset or "",
+        "Cache-Control": "no-store",
+        "X-Mod-Urls": str(meta.mod_flags["urls"]),
+        "X-Mod-Emojis": str(meta.mod_flags["emojis"]),
+        "X-Mod-Slurs": str(meta.mod_flags["slurs"]),
+        "Content-Disposition": (
+            f'inline; filename="{params.voice_id}-{meta.request_id}.{ext}"'
+        ),
+        "X-Voice-Requested": meta.requested_voice or "",
+        "X-Voice-Fallback": "1" if meta.used_fallback else "0",
+    }
+
+    if extra:
+        h.update(extra)
+
+    return h
+
+
+def _temp_path(suffix):
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return path
+
+
 def _rm(p):
-    try:
+    with contextlib.suppress(Exception):
         os.remove(p)
-    except Exception:
-        pass
 
 
 def _norm(w):
@@ -408,8 +485,7 @@ def _norm(w):
             "loudnorm=I=-16:TP=-1.5:LRA=11",
             n,
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
     return n if r.returncode == 0 and os.path.exists(n) else w
@@ -434,14 +510,13 @@ def _mp3(w, br):
             br,
             m,
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
     if r.returncode != 0 or not os.path.exists(m):
         return b""
 
-    b = open(m, "rb").read()
+    b = Path(m).read_bytes()
     _rm(m)
     return b
 
@@ -472,45 +547,52 @@ def _kokoro_synth(txt, vid, ls, out_path):
     sf.write(out_path, full, KOKORO_SR, subtype="PCM_16")
 
 
-def _synth(info, txt, vid, ls, ns, nw, spk, out_path):
+def _synth(info, text, params, out_path):
     if (info or {}).get("backend") == "kokoro":
         with sem:
-            _kokoro_synth(txt, vid, ls, out_path)
+            _kokoro_synth(text, params.voice_id, params.length_scale, out_path)
     else:
         with sem:
-            _piper_synth(info, txt, out_path, ls, ns, nw, spk)
+            _piper_synth(
+                info,
+                text,
+                out_path,
+                params.length_scale,
+                params.noise_scale,
+                params.noise_w,
+                params.speaker_id,
+            )
 
 
-def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
-    info = _vinfo(vid)
+def _core(text, params):
+    info = _vinfo(params.voice_id)
 
-    of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    of.close()
+    of_path = _temp_path(".wav")
 
-    rm = [of.name]
+    rm = [of_path]
 
     try:
-        _synth(info, txt, vid, ls, ns, nw, spk, of.name)
+        _synth(info, text, params, of_path)
 
-        fx = voice_fx.process_wav(of.name, voice_id=vid)
+        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id)
 
-        if fx != of.name:
+        if fx != of_path:
             rm.append(fx)
 
-        src = _norm(fx) if norm else fx
+        src = _norm(fx) if params.normalize else fx
 
         if src != fx:
             rm.append(src)
 
-        if fmt == "mp3":
-            b = _mp3(src, br)
+        if params.fmt == "mp3":
+            b = _mp3(src, params.bitrate)
             m = "audio/mpeg" if b else "audio/wav"
 
             if not b:
-                b = open(src, "rb").read()
+                b = Path(src).read_bytes()
 
-        elif fmt == "wav":
-            b = open(src, "rb").read()
+        elif params.fmt == "wav":
+            b = Path(src).read_bytes()
             m = "audio/wav"
 
         else:
@@ -520,154 +602,95 @@ def _core(txt, vid, fmt, ls, ns, nw, ss, spk, norm, br):
         for p in rm:
             _rm(p)
 
-    if not b or len(b) <= 44:
+    if not b or len(b) <= WAV_HEADER_BYTES:
         raise RuntimeError("empty audio")
 
     return b, m, info
 
 
-def tts(d):
-    t0 = time.time()
+def _resolve_request(d):
+    """Turn a raw request dict into the settings the synth chain needs."""
+    started_at = time.time()
 
-    tx = _san(d.get("text") or "")
+    text = _san(d.get("text") or "")
+    text, mod_flags = mod.filter_text(text)
 
-    if not tx:
-        raise RuntimeError("empty")
-
-    tx, mod_flags = mod.filter_text(tx)
-
-    if not tx:
-        raise RuntimeError("empty")
-
-    a1, rest = _alias_prefix(tx)
-    p1, clean = _preset_prefix(rest)
-
+    alias_voice, rest = _alias_prefix(text)
+    preset_prefix, clean = _preset_prefix(rest)
     clean, speed_mult = _parse_speed_modifier(clean)
 
     if not clean:
         raise RuntimeError("empty")
 
-    vf = (d.get("voice") or "").strip()
+    voice = (d.get("voice") or "").strip()
+    voice = aliases.get(voice, voice)
 
-    if vf in aliases:
-        vf = aliases[vf]
+    requested_voice = alias_voice or voice or None
+    voice_id, used_fallback = _resolve_voice_id(requested_voice)
 
-    req_voice = a1 or vf or None
-    vid, used_fallback = _resolve_voice_id(req_voice)
+    preset = (d.get("preset") or preset_prefix or "").lower()
+    preset_values = presets.get(preset, {})
 
-    psel = (d.get("preset") or p1 or "").lower()
-    pv = presets.get(psel, {})
+    base_scale = d.get("length_scale", preset_values.get("length_scale"))
+    length_scale = (base_scale or 1.0) * speed_mult if speed_mult != 1.0 else base_scale
 
-    base_ls = d.get("length_scale", pv.get("length_scale"))
-    ls = (base_ls or 1.0) * speed_mult if speed_mult != 1.0 else base_ls
+    normalize = d.get("normalize")
 
-    ns = d.get("noise_scale", pv.get("noise_scale"))
-    nw = d.get("noise_w", pv.get("noise_w"))
-    ss = d.get("sentence_silence", pv.get("sentence_silence"))
-    spk = d.get("speaker_id")
-
-    fmt = (d.get("format") or cfg.get("default_format", "mp3")).lower()
-    norm = bool(
-        d.get("normalize")
-        if d.get("normalize") is not None
-        else cfg.get("normalize", False)
+    params = SynthParams(
+        voice_id=voice_id,
+        length_scale=length_scale,
+        noise_scale=d.get("noise_scale", preset_values.get("noise_scale")),
+        noise_w=d.get("noise_w", preset_values.get("noise_w")),
+        speaker_id=d.get("speaker_id"),
+        fmt=(d.get("format") or cfg.get("default_format", "mp3")).lower(),
+        normalize=bool(
+            normalize if normalize is not None else cfg.get("normalize", False)
+        ),
+        bitrate=d.get("bitrate") or cfg.get("mp3_bitrate", "128k"),
     )
-    br = d.get("bitrate") or cfg.get("mp3_bitrate", "128k")
-    rid = uuid.uuid4().hex[:8]
+
+    meta = RequestMeta(
+        request_id=uuid.uuid4().hex[:8],
+        text=clean,
+        preset=preset,
+        mod_flags=mod_flags,
+        requested_voice=requested_voice,
+        used_fallback=used_fallback,
+        started_at=started_at,
+    )
+
+    return clean, params, meta
+
+
+def tts(d):
+    clean, params, meta = _resolve_request(d)
 
     if sfx.has_sfx_tags(clean):
-        return _tts_with_sfx(
-            clean,
-            vid,
-            fmt,
-            ls,
-            ns,
-            nw,
-            ss,
-            spk,
-            norm,
-            br,
-            rid,
-            req_voice,
-            used_fallback,
-            mod_flags,
-            psel,
-            t0,
-        )
+        return _tts_with_sfx(clean, params, meta)
 
-    key = (vid, clean, fmt, ls, ns, nw, ss, spk, norm, br, psel)
+    key = params.cache_key(clean, meta.preset)
     hit = cache.get(key)
 
     if hit:
         b, m = hit
-        h = {
-            "X-Req-Id": rid,
-            "X-Voice": vid,
-            "X-Format": m,
-            "X-Cache": "hit",
-            "X-Text-Chars": str(len(clean)),
-            "X-Duration-MS": "0",
-            "X-Preset": psel or "",
-            "Cache-Control": "no-store",
-            "X-Mod-Urls": str(mod_flags["urls"]),
-            "X-Mod-Emojis": str(mod_flags["emojis"]),
-            "X-Mod-Slurs": str(mod_flags["slurs"]),
-        }
+        return b, m, _resp_headers(params, meta, m, True, 0)
 
-        ext = "mp3" if m == "audio/mpeg" else "wav"
-        h["Content-Disposition"] = f'inline; filename="{vid}-{rid}.{ext}"'
-        h["X-Voice-Requested"] = req_voice or ""
-        h["X-Voice-Fallback"] = "1" if used_fallback else "0"
-
-        return b, m, h
-
-    b, m, info = _core(clean, vid, fmt, ls, ns, nw, ss, spk, norm, br)
+    b, m, info = _core(clean, params)
     cache[key] = (b, m)
 
-    dur = int((time.time() - t0) * 1000)
-
-    h = {
-        "X-Req-Id": rid,
-        "X-Voice": vid,
-        "X-Format": m,
-        "X-Cache": "miss",
-        "X-Sample-Rate": str(info["sample_rate"]),
-        "X-Bytes": str(len(b)),
-        "X-Text-Chars": str(len(clean)),
-        "X-Duration-MS": str(dur),
-        "X-Preset": psel or "",
-        "Cache-Control": "no-store",
-        "X-Mod-Urls": str(mod_flags["urls"]),
-        "X-Mod-Emojis": str(mod_flags["emojis"]),
-        "X-Mod-Slurs": str(mod_flags["slurs"]),
-    }
-
-    ext = "mp3" if m == "audio/mpeg" else "wav"
-    h["Content-Disposition"] = f'inline; filename="{vid}-{rid}.{ext}"'
-    h["X-Voice-Requested"] = req_voice or ""
-    h["X-Voice-Fallback"] = "1" if used_fallback else "0"
+    h = _resp_headers(
+        params,
+        meta,
+        m,
+        False,
+        meta.elapsed_ms(),
+        {"X-Sample-Rate": str(info["sample_rate"]), "X-Bytes": str(len(b))},
+    )
 
     return b, m, h
 
 
-def _tts_with_sfx(
-    clean,
-    vid,
-    fmt,
-    ls,
-    ns,
-    nw,
-    ss,
-    spk,
-    norm,
-    br,
-    rid,
-    req_voice,
-    used_fallback,
-    mod_flags,
-    psel,
-    t0,
-):
+def _tts_with_sfx(clean, params, meta):
     parts = sfx.parse_sfx_tags(clean)
     segs = []
     rm = []
@@ -706,7 +729,7 @@ def _tts_with_sfx(
                 if not txt:
                     continue
 
-                wav, tmp = _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm)
+                wav, tmp = _render_tts_wav(txt, params)
                 rm += tmp
 
                 wav48 = _to_mono_wav(wav, trim=True)
@@ -718,29 +741,16 @@ def _tts_with_sfx(
         if not segs:
             raise RuntimeError("empty audio")
 
-        b, m = _concat_wavs(segs, fmt=fmt, bitrate=br)
+        b, m = _concat_wavs(segs, fmt=params.fmt, bitrate=params.bitrate)
 
-        dur = int((time.time() - t0) * 1000)
-
-        h = {
-            "X-Req-Id": rid,
-            "X-Voice": vid,
-            "X-Format": m,
-            "X-Cache": "miss",
-            "X-Text-Chars": str(len(clean)),
-            "X-Duration-MS": str(dur),
-            "X-Preset": psel or "",
-            "X-SFX-Count": str(sfx_count),
-            "Cache-Control": "no-store",
-            "X-Mod-Urls": str(mod_flags["urls"]),
-            "X-Mod-Emojis": str(mod_flags["emojis"]),
-            "X-Mod-Slurs": str(mod_flags["slurs"]),
-        }
-
-        ext = "mp3" if m == "audio/mpeg" else "wav"
-        h["Content-Disposition"] = f'inline; filename="{vid}-{rid}.{ext}"'
-        h["X-Voice-Requested"] = req_voice or ""
-        h["X-Voice-Fallback"] = "1" if used_fallback else "0"
+        h = _resp_headers(
+            params,
+            meta,
+            m,
+            False,
+            meta.elapsed_ms(),
+            {"X-SFX-Count": str(sfx_count)},
+        )
 
         return b, m, h
 
@@ -801,29 +811,28 @@ def del_alias(n):
     aliases.pop(n, None)
 
 
-def _render_tts_wav(txt, vid, ls, ns, nw, ss, spk, norm):
-    info = _vinfo(vid) or vc[_default_voice_id()]
+def _render_tts_wav(text, params):
+    info = _vinfo(params.voice_id) or vc[_default_voice_id()]
 
-    of = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    of.close()
+    of_path = _temp_path(".wav")
 
     try:
-        _synth(info, txt, vid, ls, ns, nw, spk, of.name)
-        fx = voice_fx.process_wav(of.name, voice_id=vid)
-        src = _norm(fx) if norm else fx
+        _synth(info, text, params, of_path)
+        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id)
+        src = _norm(fx) if params.normalize else fx
 
         extra = []
 
-        if fx != of.name:
+        if fx != of_path:
             extra.append(fx)
 
         if src != fx:
             extra.append(src)
 
-        return src, [of.name] + extra
+        return src, [of_path, *extra]
 
     except:
-        _rm(of.name)
+        _rm(of_path)
         raise
 
 
@@ -831,8 +840,7 @@ def _to_mono_wav(inp, sample_rate=48000, trim=False, gain_db=0):
     if not _ffmpeg:
         return inp
 
-    out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    out.close()
+    out_path = _temp_path(".wav")
 
     cmd = [_ffmpeg, "-y", "-loglevel", "error", "-i", inp]
 
@@ -847,26 +855,24 @@ def _to_mono_wav(inp, sample_rate=48000, trim=False, gain_db=0):
     if af:
         cmd += ["-af", ",".join(af)]
 
-    cmd += ["-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", out.name]
+    cmd += ["-ac", "1", "-ar", str(sample_rate), "-c:a", "pcm_s16le", out_path]
 
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    r = subprocess.run(cmd, capture_output=True)
 
-    return out.name if r.returncode == 0 and os.path.exists(out.name) else inp
+    return out_path if r.returncode == 0 and os.path.exists(out_path) else inp
 
 
 def _concat_wavs(paths, fmt="mp3", bitrate=None):
     if not _ffmpeg:
         raise RuntimeError("ffmpeg not found")
 
-    lst = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    lst_path = _temp_path(".txt")
 
-    for p in paths:
-        lst.write(f"file '{p}'\n")
+    with open(lst_path, "w") as f:
+        for p in paths:
+            f.write(f"file '{p}'\n")
 
-    lst.close()
-
-    merged_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    merged_wav.close()
+    merged_wav_path = _temp_path(".wav")
 
     r = subprocess.run(
         [
@@ -879,36 +885,33 @@ def _concat_wavs(paths, fmt="mp3", bitrate=None):
             "-safe",
             "0",
             "-i",
-            lst.name,
+            lst_path,
             "-c",
             "copy",
-            merged_wav.name,
+            merged_wav_path,
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
-    os.remove(lst.name)
+    os.remove(lst_path)
 
-    if r.returncode != 0 or not os.path.exists(merged_wav.name):
+    if r.returncode != 0 or not os.path.exists(merged_wav_path):
         raise RuntimeError("concat failed")
 
     if fmt == "wav":
-        b = open(merged_wav.name, "rb").read()
-        os.remove(merged_wav.name)
+        b = Path(merged_wav_path).read_bytes()
+        os.remove(merged_wav_path)
         return b, "audio/wav"
 
     br = bitrate or cfg.get("mp3_bitrate", "128k")
-    mp3 = _mp3(merged_wav.name, br)
+    mp3 = _mp3(merged_wav_path, br)
 
-    try:
-        os.remove(merged_wav.name)
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        os.remove(merged_wav_path)
 
     if mp3:
         return mp3, "audio/mpeg"
 
-    b = open(merged_wav.name, "rb").read() if os.path.exists(merged_wav.name) else b""
+    b = Path(merged_wav_path).read_bytes() if os.path.exists(merged_wav_path) else b""
 
     return b, "audio/wav"

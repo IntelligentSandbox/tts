@@ -1,9 +1,9 @@
+import contextlib
 import os
 import secrets
 import stat
 
 import yaml
-
 from echo_common import logger
 
 ROLES = ["admin", "mod", "tts", "push", "pull", "overlay"]
@@ -18,10 +18,8 @@ FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
 
 
 def _chmod600(p):
-    try:
+    with contextlib.suppress(Exception):
         os.chmod(p, FILE_MODE)
-    except Exception:
-        pass
 
 
 def _resolve(p, base_dir=None):
@@ -46,7 +44,7 @@ def _read(p, base_dir=None):
     rp = _resolve(p, base_dir)
 
     if os.path.exists(rp):
-        with open(rp, "r", encoding="utf-8") as f:
+        with open(rp, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     return {}

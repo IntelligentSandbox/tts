@@ -6,7 +6,7 @@ async function jget(url) {
   return await r.json()
 }
 
-async function jpost(url, body) {
+async function post(url, body) {
   const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -14,17 +14,16 @@ async function jpost(url, body) {
     ...cred
   })
   if (!r.ok) throw new Error(`POST ${url} -> ${r.status}`)
+  return r
+}
+
+async function jpost(url, body) {
+  const r = await post(url, body)
   return await r.json()
 }
 
 async function postBinary(url, body) {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    ...cred
-  })
-  if (!r.ok) throw new Error(`POST ${url} -> ${r.status}`)
+  const r = await post(url, body)
   const arrayBuffer = await r.arrayBuffer()
   const ct = r.headers.get('content-type') || 'application/octet-stream'
   return { arrayBuffer, contentType: ct }

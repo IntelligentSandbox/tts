@@ -1,5 +1,6 @@
-import mod
 import pytest
+
+import mod
 
 
 def test_mask_token_short_and_long():
