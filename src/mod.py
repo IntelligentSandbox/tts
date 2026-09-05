@@ -1,8 +1,10 @@
+import contextlib
 import os
 import random
 import re
 import unicodedata
 
+import emoji
 from echo_common import resolve_path
 
 _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
@@ -10,6 +12,10 @@ _url_re = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
 _BEEPS = ("censor-beep-1", "censor-beep-2", "censor-beep-3")
 
 CENSOR_MODES = ("drop", "mask", "beep", "duck", "random")
+
+MASK_WHOLE_WORD_CHARS = 2
+SHORT_BEEP_CHARS = 4
+MEDIUM_BEEP_CHARS = 7
 
 _leet = {
     "a": "[a@4]",
@@ -24,39 +30,18 @@ _leet = {
     "z": "[z2]",
 }
 
-_emoji: set = set()
-
-# TODO: https://unicode.org/reports/tr51/tr51-12.html#Identification
-with open(
-    os.path.join(os.path.dirname(__file__), "assets", "emoji-data.txt"),
-    encoding="utf-8",
-) as f:
-    for line in f:
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
-
-        code = line.split(";", 1)[0].strip()
-
-        if " " in code:
-            continue
-
-        if ".." in code:
-            a, b = code.split("..")
-            _emoji.update(range(int(a, 16), int(b, 16) + 1))
-        else:
-            _emoji.add(int(code, 16))
-
 
 def _remove_emojis(s):
     """Remove Unicode emoji characters from a string."""
-    return "".join(ch for ch in s if ord(ch) not in _emoji)
+    return emoji.replace_emoji(s, replace="")
 
 
 def _mask_token(src):
     """Mask all but the first and last character with asterisks."""
     return (
-        "*" * len(src) if len(src) <= 2 else (src[0] + "*" * (len(src) - 2) + src[-1])
+        "*" * len(src)
+        if len(src) <= MASK_WHOLE_WORD_CHARS
+        else (src[0] + "*" * (len(src) - 2) + src[-1])
     )
 
 
@@ -66,15 +51,15 @@ def _censor_sound(word, mode):
         return "censor-beep-duck"
 
     if mode == "random":
-        return random.choice(_BEEPS + ("censor-beep-duck",))
+        return random.choice((*_BEEPS, "censor-beep-duck"))
 
     # longer word gets a longer beep
     n = sum(ch.isalnum() for ch in word)
 
-    if n <= 4:
+    if n <= SHORT_BEEP_CHARS:
         return _BEEPS[0]
 
-    if n <= 7:
+    if n <= MEDIUM_BEEP_CHARS:
         return _BEEPS[1]
 
     return _BEEPS[2]
@@ -89,9 +74,9 @@ def _normalize(s):
 def _obfus_rx(term):
     """Compile a regex that matches obfuscated variants of a term."""
     t = _normalize(term.lower())
-    parts = []
-    for ch in t:
-        parts.append(_leet.get(ch, re.escape(ch)) if ch.isalnum() else re.escape(ch))
+    parts = [
+        _leet.get(ch, re.escape(ch)) if ch.isalnum() else re.escape(ch) for ch in t
+    ]
     glue = r"[^a-zA-Z0-9]{0,2}"
     return re.compile(glue.join(parts), re.IGNORECASE)
 
@@ -114,7 +99,7 @@ class SlurCensor:
         """Read terms from file, ignoring empty lines and comments"""
         if not self.path or not os.path.exists(self.path):
             return []
-        with open(self.path, "r", encoding="utf-8") as f:
+        with open(self.path, encoding="utf-8") as f:
             lines = [ln.strip() for ln in f]
         return [t for t in lines if t and not t.startswith("#")]
 
@@ -176,10 +161,8 @@ class SlurCensor:
         with open(self.path, "w", encoding="utf-8") as f:
             for t in self.raw:
                 f.write(t + "\n")
-        try:
+        with contextlib.suppress(OSError):
             self.mtime = os.path.getmtime(self.path)
-        except OSError:
-            pass
 
 
 class Moderator:
@@ -250,7 +233,7 @@ class Moderator:
 _moderator = None
 
 
-def init_moderator(cfg, base_dir: str | None = None):
+def init_moderator(cfg, base_dir=None):
     """Initialize the global moderator instance."""
     global _moderator
     mcfg = dict(cfg.get("moderation") or {})
