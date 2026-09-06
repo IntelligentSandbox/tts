@@ -36,7 +36,10 @@ async function getPanelStatus() {
   if (tb) tb.disabled = !canTts
   byId('alias_admin').style.display = s.admin ? 'block' : 'none'
   const ta = byId('token_admin')
-  if (ta) ta.style.display = s.admin ? 'block' : 'none'
+  if (ta) {
+    ta.style.display = s.admin ? 'block' : 'none'
+    if (s.admin) loadEmbeds()
+  }
   const oa = byId('oauth_admin')
   if (oa) oa.style.display = s.admin ? 'block' : 'none'
   const mp = byId('mod_panel')
@@ -356,24 +359,95 @@ document.addEventListener('change', (e) => {
   }
 })
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {}
+
+  // the clipboard api is https only so fall back without revealing the text
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.left = '-9999px'
+  document.body.appendChild(ta)
+  ta.select()
+
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } catch {}
+
+  ta.remove()
+  return ok
+}
+
+function addEmbedRow(url, expires) {
+  const full = new URL(url, location.origin).href
+  const eid = new URL(full).searchParams.get('embed') || ''
+  const row = document.createElement('div')
+
+  const label = document.createElement('span')
+  label.textContent = location.origin + '/api/overlay?embed=' + (eid ? eid.slice(0, 6) + '***' : '***')
+  label.textContent += expires ? ' exp ' + new Date(expires * 1000).toLocaleString() : ' no expiry'
+
+  const btn = document.createElement('button')
+  btn.textContent = 'copy'
+  btn.style.marginLeft = '6px'
+  btn.addEventListener('click', async () => {
+    const ok = await copyText(full)
+    btn.textContent = ok ? 'copied' : 'copy failed'
+    setTimeout(() => (btn.textContent = 'copy'), 1200)
+  })
+
+  const del = document.createElement('button')
+  del.textContent = 'delete'
+  del.style.marginLeft = '4px'
+  del.addEventListener('click', async () => {
+    del.disabled = true
+    try {
+      await api.overlay.del(eid)
+      row.remove()
+    } catch (err) {
+      del.disabled = false
+      console.error(err)
+      alert(err.message)
+    }
+  })
+
+  row.append(label, btn, del)
+  byId('mint_result').appendChild(row)
+}
+
+async function loadEmbeds() {
+  const out = byId('mint_result')
+  out.innerHTML = ''
+
+  try {
+    const j = await api.overlay.embeds()
+    for (const e of j.embeds || []) {
+      if (e.revoked) continue
+      addEmbedRow(e.url, e.expires)
+    }
+  } catch (err) {
+    console.error(err)
+  }
+}
+
 async function handleMintToken() {
   const ttl = parseInt(byId('token_ttl').value || '3600', 10)
   const roles = JSON.parse(byId('token_roles').value)
   const originElem = byId('token_origin')
   const originVal = originElem ? originElem.value.trim() || null : null
-  const out = byId('mint_result')
   try {
     const res = await api.overlay.embed({ ttl, roles, origin: originVal })
-    const eid = res.embed_id || new URL(res.url, location.origin).searchParams.get('embed')
-    const masked = location.origin + '/api/overlay?embed=' + (eid ? eid.slice(0, 6) + '***' : '***')
-    const entry = document.createElement('div')
-    entry.textContent = masked
-    out.appendChild(entry)
+    addEmbedRow(res.url || '/api/overlay?embed=' + res.embed_id, res.expires)
   } catch (err) {
     const errEl = document.createElement('div')
     errEl.style.color = 'red'
     errEl.textContent = 'error: ' + err.message
-    out.appendChild(errEl)
+    byId('mint_result').appendChild(errEl)
   }
 }
 

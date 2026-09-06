@@ -685,7 +685,9 @@ def make_app(cfg):
         if tk.get("revoked"):
             raise HTTPException(401, "revoked")
 
-        if tk.get("expires", 0) < int(time.time()):
+        exp = tk.get("expires") or 0
+
+        if exp and exp < int(time.time()):
             raise HTTPException(401, "expired")
 
         # enforce origin if embed has an origin bound
@@ -700,10 +702,13 @@ def make_app(cfg):
         payload = {
             "iss": "tts",
             "iat": int(time.time()),
-            "exp": tk.get("expires"),
             "jti": tk.get("jti"),
             "roles": tk.get("roles"),
         }
+
+        if exp:
+            payload["exp"] = exp
+
         token = jwt.encode(payload, app.state.jwt_secret, algorithm="HS256")
         inj = f"<script>window.OVERLAY_TOKEN = {json.dumps(token)};</script>"
         return HTMLResponse(inj + html)
@@ -712,12 +717,21 @@ def make_app(cfg):
     async def overlay_mint_token(req: Request):
         j = await req.json()
         ttl = int(j.get("ttl", 3600))
+
+        if ttl < 0:
+            raise HTTPException(400, "bad ttl")
+
         roles = j.get("roles") or ["tts", "pull"]
         note = j.get("note") or ""
         jti = uuid.uuid4().hex
         now = int(time.time())
-        exp = now + ttl
-        payload = {"iss": "tts", "iat": now, "exp": exp, "jti": jti, "roles": roles}
+        # a zero ttl never expires
+        exp = now + ttl if ttl else 0
+        payload = {"iss": "tts", "iat": now, "jti": jti, "roles": roles}
+
+        if exp:
+            payload["exp"] = exp
+
         token = jwt.encode(payload, req.app.state.jwt_secret, algorithm="HS256")
         db.insert_token(jti, roles, exp, "admin", now, note)
         return {"token": token, "expires": int(exp), "jti": jti}
@@ -726,11 +740,16 @@ def make_app(cfg):
     async def overlay_create_embed(req: Request):
         j = await req.json()
         ttl = int(j.get("ttl", 3600))
+
+        if ttl < 0:
+            raise HTTPException(400, "bad ttl")
+
         roles = j.get("roles") or ["tts", "pull"]
         note = j.get("note") or ""
         jti = uuid.uuid4().hex
         now = int(time.time())
-        exp = now + ttl
+        # a zero ttl never expires
+        exp = now + ttl if ttl else 0
         db.insert_token(jti, roles, exp, "admin", now, note)
         # generate a longer unpredictable embed id
         embed_id = secrets.token_urlsafe(18)
