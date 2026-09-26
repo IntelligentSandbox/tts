@@ -3,8 +3,6 @@ import shutil
 import sys
 from subprocess import run
 
-import secrets_util as sec
-
 no_venv = "--no-venv" in sys.argv
 
 venv_dir = os.path.abspath("./tts-venv")
@@ -28,7 +26,3 @@ if not os.path.isfile("private/mod_blocklist.txt"):
 
 if not os.path.isfile("private/secrets.yaml"):
     shutil.copyfile("templates/secrets.yaml.example", "private/secrets.yaml")
-
-# generate keys now so they exist without running the server first
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sec.ensure_keys({"file": "src/private/secrets.yaml"}, base_dir=root)

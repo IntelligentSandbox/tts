@@ -13,7 +13,8 @@ max_concurrency: 2
 max_sfx_per_request: 10
 
 # "*" or comma-separated list of origins
-cors_allow_origins: "*"
+cors_allow_origins:
+  - "*"
 
 server:
   host: "0.0.0.0"
@@ -23,6 +24,9 @@ db_file: data/tts.db
 
 # short prefixes mapped to voice ids, e.g. "ryan: hello" -> en_US-ryan-high
 aliases: {}
+
+# short names mapped to sound ids, used by tags like "{drum}"
+sfx_aliases: {}
 
 # selected via the "preset" field or inline tags like "[fast] hello"
 presets:
@@ -52,6 +56,8 @@ moderation:
 auth:
   enabled: true
   file: src/private/secrets.yaml
+  # grants the panel admin without an oauth login (local dev only)
+  dev_admin: false
 
 session:
   file: src/private/secrets.yaml

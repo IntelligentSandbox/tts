@@ -30,7 +30,7 @@ aliases = {}
 presets = {}
 profiles = {}
 cache = None
-_auth = {"enabled": False, "keys": {}}
+_auth = {"enabled": False, "key": None, "dev_admin": False}
 _ffmpeg = None
 _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
 
@@ -182,10 +182,17 @@ def init(c, base_dir=None):
     a = cfg.get("auth") or {}
 
     if a.get("enabled"):
-        _auth = {"enabled": True, "keys": sec.ensure_keys(a, base_dir=base_dir)}
-        logger.info(f"[auth] enabled; roles={list(_auth['keys'].keys())}")
+        _auth = {
+            "enabled": True,
+            "key": sec.ensure_service_key(a, base_dir=base_dir),
+            "dev_admin": bool(a.get("dev_admin")),
+        }
+        logger.info("[auth] enabled")
+
+        if _auth["dev_admin"]:
+            logger.warning("[auth] dev_admin is on (the panel is open to anyone)")
     else:
-        _auth = {"enabled": False, "keys": {}}
+        _auth = {"enabled": False, "key": None, "dev_admin": False}
         logger.info("[auth] disabled")
 
     voices()
@@ -247,27 +254,14 @@ def auth_enabled():
     return bool(_auth.get("enabled"))
 
 
-def _role_key(role):
-    return (_auth.get("keys") or {}).get(role)
+def dev_admin():
+    """Whether the panel hands out admin without an oauth login."""
+    return bool(_auth.get("dev_admin"))
 
 
-def auth_ok(role, key):
-    if not auth_enabled():
-        return True
-
-    if not key:
-        return False
-
-    exp = _role_key(role)
-
-    if exp:
-        return hmac.compare_digest(str(key), str(exp))
-
-    for v in (_auth.get("keys") or {}).values():
-        if hmac.compare_digest(str(key), str(v)):
-            return True
-
-    return False
+def service_key_ok(key):
+    exp = _auth.get("key")
+    return bool(key) and bool(exp) and hmac.compare_digest(str(key), str(exp))
 
 
 def _scan():
@@ -778,53 +772,64 @@ def tts(d):
     return b, m, h
 
 
+def render_parts(parts, params, rm, sfx_count=0, max_sfx=None):
+    """Turn parsed sfx and text parts into mono wav segments.
+
+    The caller owns rm so a partial failure still cleans up temp files.
+    """
+    if max_sfx is None:
+        max_sfx = int(cfg.get("max_sfx_per_request", 10))
+
+    segs = []
+
+    for p in parts:
+        if "sfx" in p:
+            if sfx_count >= max_sfx:
+                continue
+
+            _, ap = sfx.resolve_sfx(p["sfx"], cfg)
+
+            if not ap:
+                continue
+
+            # quiet the censor beeps relative to speech
+            gain = 0
+
+            if p["sfx"].startswith("censor-beep"):
+                gain = cfg.get("moderation", {}).get("censor_gain_db", 0)
+
+            wav48 = _to_mono_wav(ap, gain_db=gain)
+            segs.append(wav48)
+
+            if wav48 != ap:
+                rm.append(wav48)
+
+            sfx_count += 1
+
+        else:
+            txt = (p.get("text") or "").strip()
+
+            if not txt:
+                continue
+
+            wav, tmp = _render_tts_wav(txt, params)
+            rm += tmp
+
+            wav48 = _to_mono_wav(wav, trim=True)
+            segs.append(wav48)
+
+            if wav48 != wav:
+                rm.append(wav48)
+
+    return segs, sfx_count
+
+
 def _tts_with_sfx(clean, params, meta):
     parts = sfx.parse_sfx_tags(clean)
-    segs = []
     rm = []
 
-    max_sfx = int(cfg.get("max_sfx_per_request", 10))
-    sfx_count = 0
-
     try:
-        for p in parts:
-            if "sfx" in p:
-                if sfx_count >= max_sfx:
-                    continue
-
-                _, ap = sfx.resolve_sfx(p["sfx"], cfg)
-
-                if not ap:
-                    continue
-
-                # quiet the censor beeps relative to speech
-                gain = 0
-
-                if p["sfx"].startswith("censor-beep"):
-                    gain = cfg.get("moderation", {}).get("censor_gain_db", 0)
-
-                wav48 = _to_mono_wav(ap, gain_db=gain)
-                segs.append(wav48)
-
-                if wav48 != ap:
-                    rm.append(wav48)
-
-                sfx_count += 1
-
-            else:
-                txt = (p.get("text") or "").strip()
-
-                if not txt:
-                    continue
-
-                wav, tmp = _render_tts_wav(txt, params)
-                rm += tmp
-
-                wav48 = _to_mono_wav(wav, trim=True)
-                segs.append(wav48)
-
-                if wav48 != wav:
-                    rm.append(wav48)
+        segs, sfx_count = render_parts(parts, params, rm)
 
         if not segs:
             raise RuntimeError("empty audio")

@@ -1,11 +1,9 @@
-import json
 import os
 import sqlite3
 
 TOKENS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tokens (
     jti TEXT PRIMARY KEY,
-    roles TEXT,
     expires INTEGER,
     created_by TEXT,
     created_at INTEGER,
@@ -21,6 +19,14 @@ CREATE TABLE IF NOT EXISTS embeds (
     created_at INTEGER,
     note TEXT,
     origin TEXT
+)
+"""
+
+PANEL_ENTRIES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS panel_entries (
+    section TEXT,
+    name TEXT,
+    PRIMARY KEY (section, name)
 )
 """
 
@@ -40,13 +46,13 @@ def init_db(path):
     c = _conn.cursor()
     c.execute(TOKENS_SCHEMA)
     c.execute(EMBEDS_SCHEMA)
+    c.execute(PANEL_ENTRIES_SCHEMA)
     _conn.commit()
 
 
 def _token_row(r):
     return {
         "jti": r["jti"],
-        "roles": json.loads(r["roles"]),
         "expires": r["expires"],
         "created_by": r["created_by"],
         "created_at": r["created_at"],
@@ -65,7 +71,7 @@ def _embed_row(r):
     }
 
 
-def insert_token(jti, roles, expires, created_by, created_at, note=""):
+def insert_token(jti, expires, created_by, created_at, note=""):
     """Insert a token."""
     if _conn is None:
         raise RuntimeError("db not initialized")
@@ -73,9 +79,9 @@ def insert_token(jti, roles, expires, created_by, created_at, note=""):
     c = _conn.cursor()
     c.execute(
         "INSERT OR REPLACE INTO tokens"
-        " (jti, roles, expires, created_by, created_at, revoked, note)"
-        " VALUES (?, ?, ?, ?, ?, 0, ?)",
-        (jti, json.dumps(roles), int(expires), created_by, int(created_at), note),
+        " (jti, expires, created_by, created_at, revoked, note)"
+        " VALUES (?, ?, ?, ?, 0, ?)",
+        (jti, int(expires), created_by, int(created_at), note),
     )
     _conn.commit()
 
@@ -91,28 +97,10 @@ def get_token(jti):
     return _token_row(r)
 
 
-def list_tokens():
-    """List all tokens."""
-    c = _conn.cursor()
-    rows = c.execute(
-        "SELECT jti, roles, expires, created_by, created_at, revoked, note"
-        " FROM tokens ORDER BY created_at DESC"
-    ).fetchall()
-    return [_token_row(r) for r in rows]
-
-
 def revoke_token(jti):
     """Revoke a token."""
     c = _conn.cursor()
     r = c.execute("UPDATE tokens SET revoked=1 WHERE jti=?", (jti,))
-    _conn.commit()
-    return r.rowcount > 0
-
-
-def revoke_token_prefix(prefix):
-    """Revoke tokens by prefix."""
-    c = _conn.cursor()
-    r = c.execute("UPDATE tokens SET revoked=1 WHERE jti LIKE ?", (prefix + "%",))
     _conn.commit()
     return r.rowcount > 0
 
@@ -155,3 +143,28 @@ def list_embeds():
         " FROM embeds ORDER BY created_at DESC"
     ).fetchall()
     return [_embed_row(r) for r in rows]
+
+
+def mark_panel_entry(section, name):
+    """Record that the panel created this catalog entry."""
+    c = _conn.cursor()
+    c.execute(
+        "INSERT OR IGNORE INTO panel_entries (section, name) VALUES (?, ?)",
+        (section, name),
+    )
+    _conn.commit()
+
+
+def unmark_panel_entry(section, name):
+    c = _conn.cursor()
+    c.execute("DELETE FROM panel_entries WHERE section=? AND name=?", (section, name))
+    _conn.commit()
+    return c.rowcount > 0
+
+
+def panel_entries(section):
+    c = _conn.cursor()
+    rows = c.execute(
+        "SELECT name FROM panel_entries WHERE section=?", (section,)
+    ).fetchall()
+    return {r["name"] for r in rows}
