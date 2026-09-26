@@ -23,14 +23,18 @@ from pedalboard.io import AudioFile
 _cfg = {}
 _default_board = None
 _voice_boards = {}
+_named_boards = {}
+_named_chains = {}
 
 
 def init(cfg):
-    global _cfg, _default_board, _voice_boards
+    global _cfg, _default_board, _voice_boards, _named_boards, _named_chains
 
     _cfg = cfg.get("voice_fx") or {}
     _default_board = None
     _voice_boards = {}
+    _named_boards = {}
+    _named_chains = {}
 
     if not _cfg.get("enabled"):
         logger.info("[voice_fx] disabled")
@@ -41,9 +45,12 @@ def init(cfg):
     for vid, sub in (_cfg.get("per_voice") or {}).items():
         _voice_boards[vid] = _build(sub.get("chain") or [])
 
+    for name, chain in (_cfg.get("chains") or {}).items():
+        set_chain(name, chain)
+
     logger.info(
         f"[voice_fx] enabled; default_stages={len(_default_board or [])} "
-        f"per_voice={list(_voice_boards.keys())}"
+        f"per_voice={list(_voice_boards.keys())} chains={list(_named_boards.keys())}"
     )
 
 
@@ -80,16 +87,51 @@ def _build(chain_cfg):
     return Pedalboard(stages)
 
 
+def _stages_of(chain_cfg):
+    if isinstance(chain_cfg, dict):
+        return chain_cfg.get("chain") or []
+
+    return chain_cfg or []
+
+
+def set_chain(name, chain_cfg):
+    """Register a named chain. Overwrites one of the same name."""
+    name = (name or "").strip().lower()
+
+    if not name:
+        return None
+
+    stages = _stages_of(chain_cfg)
+    _named_chains[name] = stages
+    _named_boards[name] = _build(stages)
+
+    return name
+
+
+def del_chain(name):
+    name = (name or "").strip().lower()
+    _named_chains.pop(name, None)
+    _named_boards.pop(name, None)
+
+
+def chains():
+    return dict(_named_chains)
+
+
 def enabled():
     return bool(_cfg.get("enabled")) and _default_board is not None
 
 
-def process_wav(in_path, voice_id=None):
+def process_wav(in_path, voice_id=None, fx=None):
     """Apply effects chain. Returns new wav path, or in_path on no-op/error."""
     if not enabled():
         return in_path
 
-    board = _voice_boards.get(voice_id, _default_board)
+    fx = (fx or "").strip().lower()
+    board = _named_boards.get(fx) if fx else None
+
+    if board is None:
+        board = _voice_boards.get(voice_id, _default_board)
 
     if board is None or len(board) == 0:
         return in_path

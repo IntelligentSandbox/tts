@@ -31,10 +31,16 @@ presets:
   slow:
     length_scale: 1.2
 
+# named voice, synth settings and fx chain, selected via the "profile" field or
+# a "narrator: hello" prefix. any key sent on the request overrides the profile
+profiles: {}
+
 # post-synth DSP chain (pedalboard). stages: pitch_shift, bitcrush, chorus, reverb, gain, highpass, lowpass, distortion, delay, compressor
 voice_fx:
   enabled: false
   chain: []
+  # named chains a profile or a request can pick by name via "fx"
+  chains: {}
 
 moderation:
   enabled: true
