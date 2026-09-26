@@ -28,8 +28,9 @@ scanned = False
 sem = None
 aliases = {}
 presets = {}
+profiles = {}
 cache = None
-_auth = {"enabled": False, "keys": {}}
+_auth = {"enabled": False, "key": None, "dev_admin": False}
 _ffmpeg = None
 _speed_re = re.compile(r"\[(fast|slow)\]", re.IGNORECASE)
 
@@ -45,40 +46,23 @@ _SILENCE_TRIM = (
 DEFAULT_VOICES = os.path.join(os.path.dirname(__file__), "..", "voices")
 DEFAULT_SOUNDS = os.path.join(os.path.dirname(__file__), "..", "sounds")
 
-KOKORO_VOICES = [
-    "af_alloy",
-    "af_aoede",
-    "af_bella",
-    "af_heart",
-    "af_jessica",
-    "af_kore",
-    "af_nicole",
-    "af_nova",
-    "af_river",
-    "af_sarah",
-    "af_sky",
-    "am_adam",
-    "am_echo",
-    "am_eric",
-    "am_fenrir",
-    "am_liam",
-    "am_michael",
-    "am_onyx",
-    "am_puck",
-    "am_santa",
-    "bf_alice",
-    "bf_emma",
-    "bf_isabella",
-    "bf_lily",
-    "bm_daniel",
-    "bm_fable",
-    "bm_george",
-    "bm_lewis",
-]
+KOKORO_REPO = "hexgrad/Kokoro-82M"
+KOKORO_LANGS = {
+    "a": "en-us",
+    "b": "en-gb",
+    "e": "es",
+    "f": "fr-fr",
+    "h": "hi",
+    "i": "it",
+    "j": "ja",
+    "p": "pt-br",
+    "z": "zh",
+}
 KOKORO_SR = 24000
 WAV_HEADER_BYTES = 44
 
 _kokoro_pipelines = {}
+_kokoro_voice_ids = None
 _kokoro_lock = threading.Lock()
 
 _piper_voices = {}
@@ -120,8 +104,40 @@ def _piper_synth(info, txt, out_path, ls, ns, nw, spk):
         voice.synthesize_wav(txt, wf, sc)
 
 
+def _kokoro_voices():
+    # the repo is the only voice list there is so ask it once and hold on
+    global _kokoro_voice_ids
+
+    with _kokoro_lock:
+        if _kokoro_voice_ids is None:
+            try:
+                from huggingface_hub import HfApi
+
+                names = [
+                    f[len("voices/") : -len(".pt")]
+                    for f in HfApi().list_repo_files(KOKORO_REPO)
+                    if f.startswith("voices/") and f.endswith(".pt")
+                ]
+            except Exception as e:
+                logger.warning("kokoro voice list unavailable, using cache: %s", e)
+                names = _kokoro_cached_voices()
+
+            _kokoro_voice_ids = sorted(names)
+
+        return _kokoro_voice_ids
+
+
+def _kokoro_cached_voices():
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    repo = "models--" + KOKORO_REPO.replace("/", "--")
+    pat = os.path.join(HF_HUB_CACHE, repo, "snapshots", "*", "voices", "*.pt")
+
+    return sorted({os.path.basename(f)[:-3] for f in glob.glob(pat)})
+
+
 def _kokoro_pipeline(voice_id):
-    lang = "b" if voice_id.startswith("b") else "a"
+    lang = voice_id[0]
 
     with _kokoro_lock:
         p = _kokoro_pipelines.get(lang)
@@ -136,7 +152,7 @@ def _kokoro_pipeline(voice_id):
 
 
 def init(c, base_dir=None):
-    global cfg, sem, cache, aliases, presets, _auth, _ffmpeg
+    global cfg, sem, cache, aliases, presets, profiles, _auth, _ffmpeg
     cfg = c
     _ffmpeg = shutil.which(cfg.get("ffmpeg_bin", "ffmpeg"))
 
@@ -156,16 +172,27 @@ def init(c, base_dir=None):
     )
     aliases = dict(cfg.get("aliases", {}))
     presets = dict(cfg.get("presets", {}))
+    profiles = {
+        str(k).strip().lower(): dict(v or {})
+        for k, v in (cfg.get("profiles") or {}).items()
+    }
     mod.init_moderator(cfg, base_dir=base_dir)
     voice_fx.init(cfg)
 
     a = cfg.get("auth") or {}
 
     if a.get("enabled"):
-        _auth = {"enabled": True, "keys": sec.ensure_keys(a, base_dir=base_dir)}
-        logger.info(f"[auth] enabled; roles={list(_auth['keys'].keys())}")
+        _auth = {
+            "enabled": True,
+            "key": sec.ensure_service_key(a, base_dir=base_dir),
+            "dev_admin": bool(a.get("dev_admin")),
+        }
+        logger.info("[auth] enabled")
+
+        if _auth["dev_admin"]:
+            logger.warning("[auth] dev_admin is on (the panel is open to anyone)")
     else:
-        _auth = {"enabled": False, "keys": {}}
+        _auth = {"enabled": False, "key": None, "dev_admin": False}
         logger.info("[auth] disabled")
 
     voices()
@@ -227,27 +254,14 @@ def auth_enabled():
     return bool(_auth.get("enabled"))
 
 
-def _role_key(role):
-    return (_auth.get("keys") or {}).get(role)
+def dev_admin():
+    """Whether the panel hands out admin without an oauth login."""
+    return bool(_auth.get("dev_admin"))
 
 
-def auth_ok(role, key):
-    if not auth_enabled():
-        return True
-
-    if not key:
-        return False
-
-    exp = _role_key(role)
-
-    if exp:
-        return hmac.compare_digest(str(key), str(exp))
-
-    for v in (_auth.get("keys") or {}).values():
-        if hmac.compare_digest(str(key), str(v)):
-            return True
-
-    return False
+def service_key_ok(key):
+    exp = _auth.get("key")
+    return bool(key) and bool(exp) and hmac.compare_digest(str(key), str(exp))
 
 
 def _scan():
@@ -255,7 +269,7 @@ def _scan():
     v = {}
     base = cfg.get("voices_dir", DEFAULT_VOICES)
 
-    for name in KOKORO_VOICES:
+    for name in _kokoro_voices():
         v[name] = {
             "id": name,
             "backend": "kokoro",
@@ -263,7 +277,7 @@ def _scan():
             "config_path": None,
             "sample_rate": KOKORO_SR,
             "speakers": 1,
-            "language": "en-gb" if name.startswith("b") else "en-us",
+            "language": KOKORO_LANGS[name[0]],
         }
 
     p = (
@@ -342,6 +356,16 @@ def _san(s):
     return s[:n]
 
 
+def _profile_prefix(s):
+    if ":" in s:
+        h, t = s.split(":", 1)
+        p = h.strip().lower()
+        if p in profiles:
+            return p, t.strip()
+
+    return None, s
+
+
 def _alias_prefix(s):
     if ":" in s:
         h, t = s.split(":", 1)
@@ -394,6 +418,7 @@ class SynthParams:
     fmt: str = "mp3"
     normalize: bool = False
     bitrate: str = "128k"
+    fx: str | None = None
 
     def cache_key(self, text, preset):
         return (
@@ -407,6 +432,7 @@ class SynthParams:
             self.normalize,
             self.bitrate,
             preset,
+            self.fx,
         )
 
 
@@ -417,6 +443,7 @@ class RequestMeta:
     request_id: str
     text: str
     preset: str
+    profile: str
     mod_flags: dict
     requested_voice: str | None
     used_fallback: bool
@@ -437,6 +464,8 @@ def _resp_headers(params, meta, mime, cached, duration_ms, extra=None):
         "X-Text-Chars": str(len(meta.text)),
         "X-Duration-MS": str(duration_ms),
         "X-Preset": meta.preset or "",
+        "X-Profile": meta.profile or "",
+        "X-FX": params.fx or "",
         "Cache-Control": "no-store",
         "X-Mod-Urls": str(meta.mod_flags["urls"]),
         "X-Mod-Emojis": str(meta.mod_flags["emojis"]),
@@ -574,7 +603,7 @@ def _core(text, params):
     try:
         _synth(info, text, params, of_path)
 
-        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id)
+        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id, fx=params.fx)
 
         if fx != of_path:
             rm.append(fx)
@@ -608,6 +637,70 @@ def _core(text, params):
     return b, m, info
 
 
+def _pick(key, *sources, default=None):
+    """First source that has a real value wins. A missing key and an explicit
+    null both fall through."""
+    for s in sources:
+        v = s.get(key)
+
+        if v is not None:
+            return v
+
+    return default
+
+
+def _params_from(d, profile_values=None, preset_values=None, speed_mult=1.0):
+    """Layer the request over its profile, then its preset, then the config.
+
+    Returns the params plus what voice the caller asked for, so headers can
+    report a fallback.
+    """
+    pro = profile_values or {}
+    pre = preset_values or {}
+
+    requested_voice = _pick("voice", d, pro)
+    voice_id, used_fallback = _resolve_voice_id(requested_voice)
+
+    base_scale = _pick("length_scale", d, pro, pre)
+    length_scale = (base_scale or 1.0) * speed_mult if speed_mult != 1.0 else base_scale
+
+    fmt = _pick("format", d, pro, default=cfg.get("default_format", "mp3"))
+    normalize = _pick("normalize", d, pro, default=cfg.get("normalize", False))
+
+    params = SynthParams(
+        voice_id=voice_id,
+        length_scale=length_scale,
+        noise_scale=_pick("noise_scale", d, pro, pre),
+        noise_w=_pick("noise_w", d, pro, pre),
+        speaker_id=_pick("speaker_id", d, pro),
+        fmt=str(fmt).lower(),
+        normalize=bool(normalize),
+        bitrate=_pick("bitrate", d, pro, default=cfg.get("mp3_bitrate", "128k")),
+        fx=_pick("fx", d, pro),
+    )
+
+    return params, requested_voice, used_fallback
+
+
+def params_for(d, speed_mult=1.0):
+    """Resolve one request dict against its profile and preset.
+
+    Both the single and the batch route go through here so a part behaves the
+    same either way.
+    """
+    profile = str(d.get("profile") or "").strip().lower()
+    profile_values = profiles.get(profile, {})
+
+    preset = str(d.get("preset") or profile_values.get("preset") or "").lower()
+    preset_values = presets.get(preset, {})
+
+    params, requested_voice, used_fallback = _params_from(
+        d, profile_values, preset_values, speed_mult
+    )
+
+    return params, profile, preset, requested_voice, used_fallback
+
+
 def _resolve_request(d):
     """Turn a raw request dict into the settings the synth chain needs."""
     started_at = time.time()
@@ -615,44 +708,33 @@ def _resolve_request(d):
     text = _san(d.get("text") or "")
     text, mod_flags = mod.filter_text(text)
 
-    alias_voice, rest = _alias_prefix(text)
+    profile_prefix, rest = _profile_prefix(text)
+    alias_voice, rest = _alias_prefix(rest)
     preset_prefix, clean = _preset_prefix(rest)
     clean, speed_mult = _parse_speed_modifier(clean)
 
     if not clean:
         raise RuntimeError("empty")
 
-    voice = (d.get("voice") or "").strip()
-    voice = aliases.get(voice, voice)
+    src = dict(d)
 
-    requested_voice = alias_voice or voice or None
-    voice_id, used_fallback = _resolve_voice_id(requested_voice)
+    for key, from_prefix in (
+        ("profile", profile_prefix),
+        ("preset", preset_prefix),
+        ("voice", alias_voice),
+    ):
+        if from_prefix and not src.get(key):
+            src[key] = from_prefix
 
-    preset = (d.get("preset") or preset_prefix or "").lower()
-    preset_values = presets.get(preset, {})
-
-    base_scale = d.get("length_scale", preset_values.get("length_scale"))
-    length_scale = (base_scale or 1.0) * speed_mult if speed_mult != 1.0 else base_scale
-
-    normalize = d.get("normalize")
-
-    params = SynthParams(
-        voice_id=voice_id,
-        length_scale=length_scale,
-        noise_scale=d.get("noise_scale", preset_values.get("noise_scale")),
-        noise_w=d.get("noise_w", preset_values.get("noise_w")),
-        speaker_id=d.get("speaker_id"),
-        fmt=(d.get("format") or cfg.get("default_format", "mp3")).lower(),
-        normalize=bool(
-            normalize if normalize is not None else cfg.get("normalize", False)
-        ),
-        bitrate=d.get("bitrate") or cfg.get("mp3_bitrate", "128k"),
+    params, profile, preset, requested_voice, used_fallback = params_for(
+        src, speed_mult
     )
 
     meta = RequestMeta(
         request_id=uuid.uuid4().hex[:8],
         text=clean,
         preset=preset,
+        profile=profile,
         mod_flags=mod_flags,
         requested_voice=requested_voice,
         used_fallback=used_fallback,
@@ -690,53 +772,64 @@ def tts(d):
     return b, m, h
 
 
+def render_parts(parts, params, rm, sfx_count=0, max_sfx=None):
+    """Turn parsed sfx and text parts into mono wav segments.
+
+    The caller owns rm so a partial failure still cleans up temp files.
+    """
+    if max_sfx is None:
+        max_sfx = int(cfg.get("max_sfx_per_request", 10))
+
+    segs = []
+
+    for p in parts:
+        if "sfx" in p:
+            if sfx_count >= max_sfx:
+                continue
+
+            _, ap = sfx.resolve_sfx(p["sfx"], cfg)
+
+            if not ap:
+                continue
+
+            # quiet the censor beeps relative to speech
+            gain = 0
+
+            if p["sfx"].startswith("censor-beep"):
+                gain = cfg.get("moderation", {}).get("censor_gain_db", 0)
+
+            wav48 = _to_mono_wav(ap, gain_db=gain)
+            segs.append(wav48)
+
+            if wav48 != ap:
+                rm.append(wav48)
+
+            sfx_count += 1
+
+        else:
+            txt = (p.get("text") or "").strip()
+
+            if not txt:
+                continue
+
+            wav, tmp = _render_tts_wav(txt, params)
+            rm += tmp
+
+            wav48 = _to_mono_wav(wav, trim=True)
+            segs.append(wav48)
+
+            if wav48 != wav:
+                rm.append(wav48)
+
+    return segs, sfx_count
+
+
 def _tts_with_sfx(clean, params, meta):
     parts = sfx.parse_sfx_tags(clean)
-    segs = []
     rm = []
 
-    max_sfx = int(cfg.get("max_sfx_per_request", 10))
-    sfx_count = 0
-
     try:
-        for p in parts:
-            if "sfx" in p:
-                if sfx_count >= max_sfx:
-                    continue
-
-                _, ap = sfx.resolve_sfx(p["sfx"], cfg)
-
-                if not ap:
-                    continue
-
-                # quiet the censor beeps relative to speech
-                gain = 0
-
-                if p["sfx"].startswith("censor-beep"):
-                    gain = cfg.get("moderation", {}).get("censor_gain_db", 0)
-
-                wav48 = _to_mono_wav(ap, gain_db=gain)
-                segs.append(wav48)
-
-                if wav48 != ap:
-                    rm.append(wav48)
-
-                sfx_count += 1
-
-            else:
-                txt = (p.get("text") or "").strip()
-
-                if not txt:
-                    continue
-
-                wav, tmp = _render_tts_wav(txt, params)
-                rm += tmp
-
-                wav48 = _to_mono_wav(wav, trim=True)
-                segs.append(wav48)
-
-                if wav48 != wav:
-                    rm.append(wav48)
+        segs, sfx_count = render_parts(parts, params, rm)
 
         if not segs:
             raise RuntimeError("empty audio")
@@ -811,6 +904,30 @@ def del_alias(n):
     aliases.pop(n, None)
 
 
+def get_profiles():
+    return profiles
+
+
+def set_profile(n, v):
+    """Store a profile. An inline chain registers under the profile name so a
+    character can be retuned without a restart."""
+    n = (n or "").strip().lower()
+    v = {k: val for k, val in (v or {}).items() if val is not None}
+    chain = v.pop("chain", None)
+
+    if chain is not None:
+        v["fx"] = voice_fx.set_chain(v.get("fx") or n, chain)
+
+    profiles[n] = v
+    return profiles
+
+
+def del_profile(n):
+    n = (n or "").strip().lower()
+    profiles.pop(n, None)
+    voice_fx.del_chain(n)
+
+
 def _render_tts_wav(text, params):
     info = _vinfo(params.voice_id) or vc[_default_voice_id()]
 
@@ -818,7 +935,7 @@ def _render_tts_wav(text, params):
 
     try:
         _synth(info, text, params, of_path)
-        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id)
+        fx = voice_fx.process_wav(of_path, voice_id=params.voice_id, fx=params.fx)
         src = _norm(fx) if params.normalize else fx
 
         extra = []

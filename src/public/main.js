@@ -2,9 +2,14 @@ import { api } from './api.js'
 
 const POLL_IDLE_MS = 600
 const POLL_ACTIVE_MS = 400
+const BLOCK_SHOWN_MAX = 50
 
 let ALIAS_SET = new Set()
+let PROFILE_SET = new Set()
 let SFX_MAP = {}
+let BLOCK_TERMS = []
+let BLOCK_SHOWN = false
+let SFX_REMOVABLE = []
 
 function byId(id) {
   return document.getElementById(id)
@@ -16,37 +21,41 @@ function numOrNull(id) {
   return Number.isFinite(n) ? n : null
 }
 
+// the select mixes both, so a profile name must not be sent as a voice id
+function voiceOrProfile(v) {
+  if (!v) return { voice: null }
+  return PROFILE_SET.has(v.toLowerCase()) ? { profile: v } : { voice: v }
+}
+
 function payload(text, voice) {
   return {
     text,
-    voice: voice || null,
+    ...voiceOrProfile(voice),
     preset: byId('preset')?.value || null,
-    length_scale: numOrNull('length_scale'),
-    noise_w: numOrNull('noise_w'),
-    speaker_id: numOrNull('speaker_id')
+    length_scale: numOrNull('length_scale')
   }
 }
 
 async function getPanelStatus() {
-  const s = await api.panel.status()
-  byId('auth_status').textContent = `admin=${s.admin ? 'on' : 'off'} | mod=${s.mod ? 'on' : 'off'}`
-  const canTts = !!(s.admin || s.mod || s.tts)
+  const me = await api.panel.status()
+  const role = me.role
+  const s = { admin: role === 'admin', mod: role === 'admin' || role === 'mod' }
+  byId('auth_status').textContent = role ? `signed in as ${role}` : 'not logged in'
+  const canTts = s.mod
   byId('submit').disabled = !canTts
-  const tb = byId('test')
-  if (tb) tb.disabled = !canTts
-  byId('alias_admin').style.display = s.admin ? 'block' : 'none'
-  const ta = byId('token_admin')
-  if (ta) {
-    ta.style.display = s.admin ? 'block' : 'none'
-    if (s.admin) loadEmbeds()
+  for (const id of ['catalog_admin', 'token_admin', 'oauth_admin']) {
+    byId(id).hidden = !s.admin
   }
-  const oa = byId('oauth_admin')
-  if (oa) oa.style.display = s.admin ? 'block' : 'none'
-  const mp = byId('mod_panel')
-  if (mp) {
-    const canMod = !!(s.admin || s.mod)
-    mp.style.display = canMod ? 'block' : 'none'
-    if (canMod) loadCensorMode()
+  byId('mod_panel').hidden = !s.mod
+
+  if (s.admin) {
+    loadEmbeds()
+    loadMappings()
+  }
+
+  if (s.mod) {
+    loadCensorMode()
+    loadBlocklist()
   }
   byId('pollq').disabled = !(s.admin || s.mod)
   if (byId('pollq').disabled) byId('pollq').checked = false
@@ -58,14 +67,26 @@ async function loadVoices() {
   const keep = sel.value
   sel.innerHTML = ''
 
-  let voices = []
-  let aliases = {}
+  let cat = {}
   try {
-    voices = await api.voices()
-  } catch {}
-  try {
-    aliases = await api.aliases.list()
-  } catch {}
+    cat = await api.catalog()
+  } catch { }
+
+  const voices = cat.voices || []
+  const aliases = cat.voice_aliases || {}
+  const profs = cat.profiles || {}
+
+  if (Object.keys(profs).length) {
+    const ogP = document.createElement('optgroup')
+    ogP.label = 'profiles'
+    for (const [n, p] of Object.entries(profs)) {
+      const o = document.createElement('option')
+      o.value = n
+      o.textContent = `${n} → ${p.voice || 'default'}${p.fx ? ` (${p.fx})` : ''}`
+      ogP.appendChild(o)
+    }
+    sel.appendChild(ogP)
+  }
 
   if (Object.keys(aliases).length) {
     const ogA = document.createElement('optgroup')
@@ -94,8 +115,10 @@ async function loadVoices() {
   if ([...sel.options].some((o) => o.value === keep)) sel.value = keep
   else if (sel.options.length) sel.selectedIndex = 0
 
-  const tgt = byId('alias_target')
-  if (tgt) {
+  for (const id of ['alias_target', 'profile_target']) {
+    const tgt = byId(id)
+    if (!tgt) continue
+
     const keep2 = tgt.value
     tgt.innerHTML = ''
     for (const v of voices) {
@@ -107,7 +130,33 @@ async function loadVoices() {
     if ([...tgt.options].some((o) => o.value === keep2)) tgt.value = keep2
   }
 
-  ALIAS_SET = new Set([...Object.keys(aliases).map((s) => s.toLowerCase()), ...voices.map((v) => v.id.toLowerCase())])
+  const rm = cat.removable || {}
+
+  const al = byId('aliaslist')
+  if (al) {
+    const items = Object.entries(aliases).map(([n, t]) => ({ term: n, label: `${n} \u2192 ${t}` }))
+    renderTermList(al, items, 'alias-del', rm.voice_alias)
+  }
+
+  const psel = byId('preset')
+  if (psel) {
+    const keepP = psel.value
+    psel.innerHTML = '<option value="">(none)</option>'
+    for (const name of cat.presets || []) {
+      const o = document.createElement('option')
+      o.value = name
+      o.textContent = name
+      psel.appendChild(o)
+    }
+    if ([...psel.options].some((o) => o.value === keepP)) psel.value = keepP
+  }
+
+  PROFILE_SET = new Set(Object.keys(profs).map((s) => s.toLowerCase()))
+  ALIAS_SET = new Set([
+    ...PROFILE_SET,
+    ...Object.keys(aliases).map((s) => s.toLowerCase()),
+    ...voices.map((v) => v.id.toLowerCase())
+  ])
 }
 
 async function loadCensorMode() {
@@ -115,7 +164,7 @@ async function loadCensorMode() {
   if (!sel) return
 
   try {
-    const { mode, modes } = await api.mod.mode()
+    const { mode, modes, censoring } = await api.mod.state()
     sel.innerHTML = ''
     for (const m of modes) {
       const o = document.createElement('option')
@@ -124,19 +173,122 @@ async function loadCensorMode() {
       sel.appendChild(o)
     }
     sel.value = mode
-  } catch {}
+    setCensoringUi(censoring)
+  } catch { }
+}
+
+function setCensoringUi(on) {
+  const box = byId('censor_on')
+  if (box) box.checked = !!on
+
+  const sel = byId('censor_mode')
+  if (sel) sel.disabled = !on
+}
+
+function renderTermList(host, items, action, removable) {
+  host.innerHTML = ''
+
+  for (const it of items) {
+    const { term, label } = typeof it === 'string' ? { term: it, label: it } : it
+    const chip = document.createElement('span')
+    chip.className = 'chip'
+    chip.textContent = label
+
+    if (action && (!removable || removable.includes(term))) {
+      const x = document.createElement('button')
+      x.dataset.action = action
+      x.dataset.term = term
+      x.textContent = '\u00d7'
+      chip.appendChild(x)
+    }
+
+    host.appendChild(chip)
+  }
+}
+
+function maskTerm(t) {
+  if (t.length <= 2) return '*'.repeat(t.length)
+  return t[0] + '*'.repeat(t.length - 2) + t.at(-1)
+}
+
+function renderBlocklist() {
+  const host = byId('blocklist')
+  const count = byId('block_count')
+  const btn = byId('block_reveal')
+  if (!host) return
+
+  if (count) count.textContent = `${BLOCK_TERMS.length} blocked`
+  if (btn) btn.textContent = BLOCK_SHOWN ? 'hide' : 'show'
+
+  if (!BLOCK_SHOWN) {
+    host.innerHTML = ''
+    return
+  }
+
+  const shown = BLOCK_TERMS.slice(0, BLOCK_SHOWN_MAX)
+  renderTermList(
+    host,
+    shown.map((t) => ({ term: t, label: maskTerm(t) })),
+    'block-remove'
+  )
+
+  if (BLOCK_TERMS.length > shown.length) {
+    const more = document.createElement('div')
+    more.textContent = `and ${BLOCK_TERMS.length - shown.length} more, edit the file for the rest`
+    host.appendChild(more)
+  }
+}
+
+async function loadBlocklist() {
+  if (!byId('blocklist')) return
+
+  try {
+    const { terms } = await api.mod.state()
+    BLOCK_TERMS = terms
+  } catch {
+    BLOCK_TERMS = []
+  }
+
+  renderBlocklist()
 }
 
 async function loadSounds() {
   SFX_MAP = {}
   try {
-    const { index, aliases } = await api.sounds()
+    const cat = await api.catalog()
+    SFX_REMOVABLE = (cat.removable || {}).sfx_alias || []
+    const index = cat.sounds || {}
+    const aliases = cat.sfx_aliases || {}
     for (const [id, v] of Object.entries(index)) SFX_MAP[id.toLowerCase()] = '/sounds/' + v.file
-    for (const [name, target] of Object.entries(aliases || {})) {
+    for (const [name, target] of Object.entries(aliases)) {
       const tgt = index[target]
       if (tgt) SFX_MAP[name.toLowerCase()] = '/sounds/' + tgt.file
     }
-  } catch {}
+    renderSfxAdmin(index, aliases)
+  } catch { }
+}
+
+function renderSfxAdmin(index, aliases) {
+  const tgt = byId('sfx_target')
+
+  if (tgt) {
+    const keep = tgt.value
+    tgt.innerHTML = ''
+    for (const id of Object.keys(index).sort()) {
+      const o = document.createElement('option')
+      o.value = id
+      o.textContent = id
+      tgt.appendChild(o)
+    }
+    if ([...tgt.options].some((o) => o.value === keep)) tgt.value = keep
+  }
+
+  const host = byId('sfxlist')
+
+  if (host) {
+    const items = Object.entries(aliases).map(([n, t]) => ({ term: n, label: `${n} \u2192 ${t}` }))
+    renderTermList(host, items, 'sfx-del', SFX_REMOVABLE)
+  }
 }
 function parseParts(input, fallbackVoice) {
   const reVoice = /(^|\s)([a-z0-9_]+):\s*/gi
@@ -202,14 +354,15 @@ async function playText(fullText, fallbackVoice, statusEl) {
     const body = single
       ? { ...payload(parts[0].text, parts[0].voice), length_scale: ls }
       : {
-          parts: parts.map((p) => (p.type === 'sfx' ? { sfx: p.name } : { text: p.text, voice: p.voice || null })),
-          format: 'mp3',
-          preset: byId('preset')?.value || null,
-          length_scale: ls,
-          noise_w: numOrNull('noise_w'),
-          speaker_id: numOrNull('speaker_id')
-        }
-    const res = single ? await api.tts(body) : await api.ttsBatch(body)
+        parts: parts.map((p) => {
+          if (p.type === 'sfx') return { sfx: p.name }
+          return Object.assign({ text: p.text }, voiceOrProfile(p.voice))
+        }),
+        format: 'mp3',
+        preset: byId('preset')?.value || null,
+        length_scale: ls
+      }
+    const res = await api.tts(body)
     // res: { arrayBuffer, contentType }
     const blobObj = new Blob([res.arrayBuffer], { type: res.contentType })
     const url = URL.createObjectURL(blobObj)
@@ -252,12 +405,14 @@ async function addRow(text, voice, jobId, opts = {}) {
 async function pollQueue() {
   if (!byId('pollq').checked) return setTimeout(pollQueue, POLL_IDLE_MS)
   try {
-    const job = await api.queue.peek()
-    const v = job.voice || byId('voices').value || null
-    const t = job.text || ''
-    const id = job.id || null
-    if (t) await addRow(t, v, id, { allowAutoplay: false })
-  } catch {}
+    const { items } = await api.queue.list()
+    const shown = new Set([...byId('list').querySelectorAll('tr')].map((tr) => tr.dataset.jobId))
+    for (const job of items) {
+      if (!job.text || shown.has(job.id)) continue
+      const v = job.voice || byId('voices').value || null
+      await addRow(job.text, v, job.id, { allowAutoplay: false })
+    }
+  } catch { }
   setTimeout(pollQueue, POLL_ACTIVE_MS)
 }
 
@@ -268,14 +423,8 @@ document.addEventListener('click', async (e) => {
 
   try {
     switch (a) {
-      case 'login-admin': {
-        const key = byId('key_admin').value.trim()
-        if (key) await api.panel.login('admin', key)
-        await getPanelStatus()
-        await Promise.all([loadVoices(), loadSounds()])
-        break
-      }
       case 'logout':
+        BLOCK_SHOWN = false
         await api.panel.logout()
         await getPanelStatus()
         await Promise.all([loadVoices(), loadSounds()])
@@ -287,6 +436,58 @@ document.addEventListener('click', async (e) => {
         await api.aliases.add(name, voice)
         byId('alias_name').value = ''
         await loadVoices()
+        break
+      }
+      case 'alias-del':
+        await api.aliases.del(e.target.dataset.term)
+        await loadVoices()
+        break
+      case 'profile-del':
+        await api.profiles.del(e.target.dataset.term)
+        await loadVoices()
+        break
+      case 'sfx-del':
+        await api.sfxAliases.del(e.target.dataset.term)
+        await loadSounds()
+        break
+      case 'block-add': {
+        const term = byId('block_term').value.trim()
+        if (!term) return
+        await api.mod.add(term)
+        byId('block_term').value = ''
+        await loadBlocklist()
+        break
+      }
+      case 'block-remove':
+        await api.mod.remove(e.target.dataset.term)
+        await loadBlocklist()
+        break
+      case 'block-reveal':
+        BLOCK_SHOWN = !BLOCK_SHOWN
+        renderBlocklist()
+        break
+      case 'block-reload':
+        await api.mod.reload()
+        await loadBlocklist()
+        break
+      case 'profile-add': {
+        const name = byId('profile_name').value.trim().toLowerCase()
+        const voice = byId('profile_target').value
+        const fx = byId('profile_fx').value.trim()
+        if (!name || !voice) return
+        await api.profiles.add({ name, voice, fx: fx || null })
+        byId('profile_name').value = ''
+        byId('profile_fx').value = ''
+        await loadVoices()
+        break
+      }
+      case 'sfx-add': {
+        const name = byId('sfx_name').value.trim().toLowerCase()
+        const target = byId('sfx_target').value
+        if (!name || !target) return
+        await api.sfxAliases.add(name, target)
+        byId('sfx_name').value = ''
+        await loadSounds()
         break
       }
       case 'refresh':
@@ -311,31 +512,27 @@ document.addEventListener('click', async (e) => {
         byId('tts').focus()
         break
       }
-      case 'test-phrase': {
-        if (byId('test').disabled) return
-        const phrases = [
-          "It's 8:30 p.m. and I just paid $12.50 for dinner.",
-          'Meeting starts at 9 a.m. on Monday, March 3rd.',
-          'I bought 2 coffees for $4.75 each at the cafe.',
-          'The flight leaves at 6:45 a.m. from gate 23.',
-          'Dr. Smith called me at 3 p.m. about the appointment on Friday.',
-          "There are 1,234 people watching right now, that's wild.",
-          'The temperature dropped to 32 degrees overnight.',
-          "I'll be back in 15 minutes, around 7:20 p.m."
-        ]
-        const pick = phrases[Math.floor(Math.random() * phrases.length)]
-        byId('tts').value = pick
-        byId('tts').focus()
-        break
-      }
       case 'mint-token':
         await handleMintToken()
         break
-      case 'oauth-refresh':
-        await handleOAuthWhoami()
+      case 'map-add': {
+        const remote = byId('map_remote').value.trim()
+        if (!remote) return
+        await api.auth.mapping({
+          provider: byId('map_provider').value,
+          remote,
+          role: byId('map_role').value
+        })
+        byId('map_remote').value = ''
+        await loadMappings()
+        break
+      }
+      case 'map-del':
+        await api.auth.delMapping(e.target.dataset.prov, e.target.dataset.term)
+        await loadMappings()
         break
       case 'login-oauth':
-        window.location.href = '/api/auth/login?provider=twitch'
+        window.location.href = '/api/auth/oauth/twitch'
         break
     }
   } catch (err) {
@@ -357,13 +554,22 @@ document.addEventListener('change', (e) => {
       alert(err.message)
     })
   }
+  if (a === 'censor-toggle') {
+    const on = e.target.checked
+    setCensoringUi(on)
+    api.mod.setCensoring(on).catch((err) => {
+      console.error(err)
+      alert(err.message)
+      setCensoringUi(!on)
+    })
+  }
 })
 
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text)
     return true
-  } catch {}
+  } catch { }
 
   // the clipboard api is https only so fall back without revealing the text
   const ta = document.createElement('textarea')
@@ -377,7 +583,7 @@ async function copyText(text) {
   let ok = false
   try {
     ok = document.execCommand('copy')
-  } catch {}
+  } catch { }
 
   ta.remove()
   return ok
@@ -437,11 +643,10 @@ async function loadEmbeds() {
 
 async function handleMintToken() {
   const ttl = parseInt(byId('token_ttl').value || '3600', 10)
-  const roles = JSON.parse(byId('token_roles').value)
   const originElem = byId('token_origin')
   const originVal = originElem ? originElem.value.trim() || null : null
   try {
-    const res = await api.overlay.embed({ ttl, roles, origin: originVal })
+    const res = await api.overlay.embed({ ttl, origin: originVal })
     addEmbedRow(res.url || '/api/overlay?embed=' + res.embed_id, res.expires)
   } catch (err) {
     const errEl = document.createElement('div')
@@ -451,19 +656,28 @@ async function handleMintToken() {
   }
 }
 
-async function handleOAuthWhoami() {
-  const div = byId('oauth_whoami')
-  div.textContent = 'Loading...'
+async function loadMappings() {
+  const host = byId('maplist')
+  if (!host) return
+
   try {
-    const j = await api.auth.whoami('twitch')
-    if (!j.ok) {
-      div.textContent = 'no oauth user in session'
-      return
+    const { mappings } = await api.auth.mappings()
+    host.innerHTML = ''
+    for (const [prov, entries] of Object.entries(mappings || {})) {
+      for (const [remote, role] of Object.entries(entries || {})) {
+        const chip = document.createElement('span')
+        chip.className = 'chip'
+        chip.textContent = `${prov}:${remote} \u2192 ${role}`
+        const x = document.createElement('button')
+        x.dataset.action = 'map-del'
+        x.dataset.prov = prov
+        x.dataset.term = remote
+        x.textContent = '\u00d7'
+        chip.appendChild(x)
+        host.appendChild(chip)
+      }
     }
-    div.innerHTML = `provider=${j.provider} id=${j.id} login=${j.login}`
-  } catch {
-    div.textContent = 'error fetching whoami'
-  }
+  } catch { }
 }
 
 getPanelStatus()

@@ -6,7 +6,6 @@ import stat
 import yaml
 from echo_common import logger
 
-ROLES = ["admin", "mod", "tts", "push", "pull", "overlay"]
 DEFAULT_SECRETS = os.path.join(os.path.dirname(__file__), "private", "secrets.yaml")
 
 # relative secret paths resolve against the service root
@@ -73,31 +72,19 @@ def ensure_session_secret(path=None, base_dir=None):
     return data["session_secret"]
 
 
-def ensure_keys(auth_cfg, base_dir=None):
-    """Ensure auth keys exist."""
+def ensure_service_key(auth_cfg, base_dir=None):
+    """Ensure the service key exists."""
     path = (auth_cfg or {}).get("file") or DEFAULT_SECRETS
     rp = _resolve(path, base_dir)
     data = _read(path, base_dir)
-    ks = dict(data.get("keys", {}))
-    created = []
 
-    for r in ROLES:
-        if r == "mod":
-            continue
-
-        if not ks.get(r):
-            ks[r] = secrets.token_urlsafe(TOKEN_LEN)
-            created.append(r)
-
-    if created or "keys" not in data:
-        data["keys"] = ks
+    if not data.get("service_key"):
+        data["service_key"] = secrets.token_urlsafe(TOKEN_LEN)
         _write(path, data, base_dir)
         logger.info(f"[auth] wrote {rp}")
+        logger.info(f"[auth] save this service key: {data['service_key']}")
 
-        for r in created:
-            logger.info(f"[auth] save this {r} key: {ks[r]}")
-
-    return ks
+    return data["service_key"]
 
 
 def ensure_jwt_secret(path=None, base_dir=None):

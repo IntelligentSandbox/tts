@@ -45,6 +45,14 @@ def get_sfx_index(cfg):
     return out
 
 
+def init_sfx_aliases(cfg):
+    """Seed aliases from config the way voice aliases are seeded."""
+    global sfx_aliases
+    sfx_aliases = {
+        str(k).strip().lower(): v for k, v in (cfg.get("sfx_aliases") or {}).items()
+    }
+
+
 def get_sfx_aliases():
     """Get current SFX aliases."""
     return dict(sfx_aliases)

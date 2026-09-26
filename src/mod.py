@@ -91,21 +91,26 @@ class SlurCensor:
         self.path = path
         self.rxs = []
         self.raw = []
+        self.lines = []
         self.mtime = None
         if path:
             self._reload()
 
-    def _read_terms(self):
-        """Read terms from file, ignoring empty lines and comments"""
+    def _read_lines(self):
+        """Read every line from the file, comments and blanks included"""
         if not self.path or not os.path.exists(self.path):
             return []
         with open(self.path, encoding="utf-8") as f:
-            lines = [ln.strip() for ln in f]
-        return [t for t in lines if t and not t.startswith("#")]
+            return [ln.rstrip("\n") for ln in f]
 
     def _reload(self):
         """Reload terms and compile regexes from the file"""
-        terms = self._read_terms()
+        self.lines = self._read_lines()
+        terms = [
+            ln.strip()
+            for ln in self.lines
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
         self.raw = terms
         self.rxs = [_obfus_rx(t) for t in terms]
         try:
@@ -140,6 +145,7 @@ class SlurCensor:
             return False
         self.raw.append(term)
         self.rxs.append(_obfus_rx(term))
+        self.lines.append(term)
         self._save()
         return True
 
@@ -151,16 +157,17 @@ class SlurCensor:
         idx = self.raw.index(term)
         self.raw.pop(idx)
         self.rxs.pop(idx)
+        self.lines = [ln for ln in self.lines if ln.strip() != term]
         self._save()
         return True
 
     def _save(self):
-        """Persist current terms to the blocklist file."""
+        """Persist the file, keeping comments and blank lines intact."""
         if not self.path:
             return
         with open(self.path, "w", encoding="utf-8") as f:
-            for t in self.raw:
-                f.write(t + "\n")
+            for ln in self.lines:
+                f.write(ln + "\n")
         with contextlib.suppress(OSError):
             self.mtime = os.path.getmtime(self.path)
 
@@ -242,11 +249,6 @@ def init_moderator(cfg, base_dir=None):
     _moderator = Moderator(mcfg) if mcfg.get("enabled", False) else None
 
 
-def get_moderator():
-    """Get the current moderator instance."""
-    return _moderator
-
-
 def mod_enabled():
     """Check if moderation is enabled."""
     return _moderator is not None
@@ -286,7 +288,11 @@ def mod_mode():
     if not _moderator:
         raise RuntimeError("moderation disabled")
 
-    return {"mode": _moderator.censor_mode, "modes": list(CENSOR_MODES)}
+    return {
+        "mode": _moderator.censor_mode,
+        "modes": list(CENSOR_MODES),
+        "censoring": _moderator.censor_slurs,
+    }
 
 
 def mod_set_mode(mode):
@@ -302,6 +308,16 @@ def mod_set_mode(mode):
     _moderator.censor_mode = mode
 
     return {"mode": mode}
+
+
+def mod_set_censoring(on):
+    """Turn slur censoring on or off without a restart."""
+    if not _moderator:
+        raise RuntimeError("moderation disabled")
+
+    _moderator.censor_slurs = bool(on)
+
+    return {"censoring": _moderator.censor_slurs}
 
 
 def filter_text(text, mode=None):

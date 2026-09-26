@@ -34,7 +34,7 @@ if __name__ == "__main__":
     host = args.host or cfg.get("server", {}).get("host", "0.0.0.0")
     port = args.port or cfg.get("server", {}).get("port", 47100)
 
-    app = make_app(cfg)
+    app = make_app(cfg, cfg_path=args.cfg)
 
     logger.info(f"service version: {service_version(__file__)}")
 
