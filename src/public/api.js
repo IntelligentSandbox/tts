@@ -29,43 +29,65 @@ async function postBinary(url, body) {
   return { arrayBuffer, contentType: ct }
 }
 
+async function jput(url, body) {
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+    ...cred
+  })
+  if (!r.ok) throw new Error(`PUT ${url} -> ${r.status}`)
+  return await r.json()
+}
+
 async function jdel(url) {
   const r = await fetch(url, { method: 'DELETE', ...cred })
   if (!r.ok) throw new Error(`DELETE ${url} -> ${r.status}`)
   return true
 }
 
+const esc = encodeURIComponent
+
 export const api = {
   panel: {
-    status: () => jget('/api/panel/status'),
-    login: (role, key) => jpost('/api/panel/login', { role, key }),
-    logout: () => jpost('/api/panel/logout', {})
+    status: () => jget('/api/auth/me'),
+    logout: () => jpost('/api/auth/logout', {})
   },
-  voices: () => jget('/api/voices'),
+  catalog: () => jget('/api/catalog'),
   aliases: {
-    list: () => jget('/api/aliases'),
-    add: (name, voice) => jpost('/api/aliases', { name, voice })
+    add: (name, voice) => jput(`/api/catalog/voice_alias/${esc(name)}`, { voice }),
+    del: (name) => jdel(`/api/catalog/voice_alias/${esc(name)}`)
   },
-  sounds: () => jget('/api/sounds'),
+  profiles: {
+    add: (body) => jput(`/api/catalog/profile/${esc(body.name)}`, body),
+    del: (name) => jdel(`/api/catalog/profile/${esc(name)}`)
+  },
+  sfxAliases: {
+    add: (name, target_id) => jput(`/api/catalog/sfx_alias/${esc(name)}`, { target_id }),
+    del: (name) => jdel(`/api/catalog/sfx_alias/${esc(name)}`)
+  },
   mod: {
-    mode: () => jget('/api/mod/mode'),
-    setMode: (mode) => jpost('/api/mod/mode', { mode })
+    state: () => jget('/api/admin/mod'),
+    setMode: (mode) => jpost('/api/admin/mod', { mode }),
+    setCensoring: (censoring) => jpost('/api/admin/mod', { censoring }),
+    add: (term) => jpost('/api/admin/mod', { add: [term] }),
+    remove: (term) => jpost('/api/admin/mod', { remove: [term] }),
+    reload: () => jpost('/api/admin/mod', { reload: true })
   },
+  reload: () => jpost('/api/admin/reload', {}),
   tts: (body) => postBinary('/api/tts', body),
-  ttsBatch: (body) => postBinary('/api/tts_batch', body),
   queue: {
-    peek: () => jget('/api/peek'),
-    del: (id) => jdel(`/api/queue/${encodeURIComponent(id)}`)
+    list: () => jget('/api/queue'),
+    del: (id) => jdel(`/api/queue/${esc(id)}`)
   },
   overlay: {
-    embed: (body) => jpost('/api/overlay/embed', body),
-    embeds: () => jget('/api/overlay/embeds'),
-    del: (id) => jdel(`/api/overlay/embed/${encodeURIComponent(id)}`)
+    embed: (body) => jpost('/api/admin/embeds', body),
+    embeds: () => jget('/api/admin/embeds'),
+    del: (id) => jdel(`/api/admin/embeds/${esc(id)}`)
   },
   auth: {
-    mappings: () => jget('/api/auth/mappings'),
-    mapping: (body) => jpost('/api/auth/mapping', body),
-    delMapping: (prov, remote) => jdel(`/api/auth/mapping/${encodeURIComponent(prov)}/${encodeURIComponent(remote)}`),
-    whoami: (provider) => jget(`/api/auth/me?provider=${encodeURIComponent(provider)}`)
+    mappings: () => jget('/api/admin/mappings'),
+    mapping: (body) => jput(`/api/admin/mappings/${esc(body.provider)}/${esc(body.remote)}`, { role: body.role }),
+    delMapping: (prov, remote) => jdel(`/api/admin/mappings/${esc(prov)}/${esc(remote)}`)
   }
 }
