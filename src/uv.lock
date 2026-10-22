@@ -468,7 +468,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf57
 [[package]]
 name = "echo-common"
 version = "0.1.0"
-source = { git = "https://github.com/ramonlabs/echo.git?subdirectory=services%2Fcommon#c4607ca6f604829f9d48699502330588aa23e5b5" }
+source = { git = "https://github.com/IntelligentSandbox/echo.git?subdirectory=services%2Fcommon#c4607ca6f604829f9d48699502330588aa23e5b5" }
 dependencies = [
     { name = "colorlog" },
     { name = "httpx" },
@@ -2297,7 +2297,7 @@ dev = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.13.0" },
     { name = "cachetools", specifier = ">=5.5.0" },
-    { name = "echo-common", git = "https://github.com/ramonlabs/echo.git?subdirectory=services%2Fcommon" },
+    { name = "echo-common", git = "https://github.com/IntelligentSandbox/echo.git?subdirectory=services%2Fcommon" },
     { name = "emoji", specifier = ">=2.15.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.28.1" },
