@@ -468,7 +468,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf57
 [[package]]
 name = "echo-common"
 version = "0.1.0"
-source = { git = "https://github.com/IntelligentSandbox/echo.git?subdirectory=services%2Fcommon#c4607ca6f604829f9d48699502330588aa23e5b5" }
+source = { git = "https://github.com/IntelligentSandbox/echo.git?subdirectory=services%2Fcommon#747d03f49f99f15335b8edb27b0aac9d3cf9f219" }
 dependencies = [
     { name = "colorlog" },
     { name = "httpx" },
