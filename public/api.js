@@ -13,7 +13,10 @@ async function post(url, body) {
     body: JSON.stringify(body),
     ...cred
   })
-  if (!r.ok) throw new Error(`POST ${url} -> ${r.status}`)
+  if (!r.ok) {
+    const { detail } = await r.json().catch(() => ({}))
+    throw new Error(detail || `POST ${url} -> ${r.status}`)
+  }
   return r
 }
 
@@ -49,10 +52,6 @@ async function jdel(url) {
 const esc = encodeURIComponent
 
 export const api = {
-  panel: {
-    status: () => jget('/api/auth/me'),
-    logout: () => jpost('/api/auth/logout', {})
-  },
   catalog: () => jget('/api/catalog'),
   aliases: {
     add: (name, voice) => jput(`/api/catalog/voice_alias/${esc(name)}`, { voice }),
@@ -67,27 +66,13 @@ export const api = {
     del: (name) => jdel(`/api/catalog/sfx_alias/${esc(name)}`)
   },
   mod: {
-    state: () => jget('/api/admin/mod'),
-    setMode: (mode) => jpost('/api/admin/mod', { mode }),
-    setCensoring: (censoring) => jpost('/api/admin/mod', { censoring }),
-    add: (term) => jpost('/api/admin/mod', { add: [term] }),
-    remove: (term) => jpost('/api/admin/mod', { remove: [term] }),
-    reload: () => jpost('/api/admin/mod', { reload: true })
+    state: () => jget('/api/mod'),
+    setMode: (mode) => jpost('/api/mod', { mode }),
+    setCensoring: (censoring) => jpost('/api/mod', { censoring }),
+    add: (term) => jpost('/api/mod', { add: [term] }),
+    remove: (term) => jpost('/api/mod', { remove: [term] }),
+    reload: () => jpost('/api/mod', { reload: true })
   },
-  reload: () => jpost('/api/admin/reload', {}),
-  tts: (body) => postBinary('/api/tts', body),
-  queue: {
-    list: () => jget('/api/queue'),
-    del: (id) => jdel(`/api/queue/${esc(id)}`)
-  },
-  overlay: {
-    embed: (body) => jpost('/api/admin/embeds', body),
-    embeds: () => jget('/api/admin/embeds'),
-    del: (id) => jdel(`/api/admin/embeds/${esc(id)}`)
-  },
-  auth: {
-    mappings: () => jget('/api/admin/mappings'),
-    mapping: (body) => jput(`/api/admin/mappings/${esc(body.provider)}/${esc(body.remote)}`, { role: body.role }),
-    delMapping: (prov, remote) => jdel(`/api/admin/mappings/${esc(prov)}/${esc(remote)}`)
-  }
+  reload: () => jpost('/api/catalog/reload', {}),
+  tts: (body) => postBinary('/api/tts', body)
 }

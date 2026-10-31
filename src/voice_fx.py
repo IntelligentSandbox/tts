@@ -20,39 +20,6 @@ from pedalboard import (
 )
 from pedalboard.io import AudioFile
 
-_cfg = {}
-_default_board = None
-_voice_boards = {}
-_named_boards = {}
-_named_chains = {}
-
-
-def init(cfg):
-    global _cfg, _default_board, _voice_boards, _named_boards, _named_chains
-
-    _cfg = cfg.get("voice_fx") or {}
-    _default_board = None
-    _voice_boards = {}
-    _named_boards = {}
-    _named_chains = {}
-
-    if not _cfg.get("enabled"):
-        logger.info("[voice_fx] disabled")
-        return
-
-    _default_board = _build(_cfg.get("chain") or [])
-
-    for vid, sub in (_cfg.get("per_voice") or {}).items():
-        _voice_boards[vid] = _build(sub.get("chain") or [])
-
-    for name, chain in (_cfg.get("chains") or {}).items():
-        set_chain(name, chain)
-
-    logger.info(
-        f"[voice_fx] enabled; default_stages={len(_default_board or [])} "
-        f"per_voice={list(_voice_boards.keys())} chains={list(_named_boards.keys())}"
-    )
-
 
 def _build(chain_cfg):
     kinds = {
@@ -94,66 +61,78 @@ def _stages_of(chain_cfg):
     return chain_cfg or []
 
 
-def set_chain(name, chain_cfg):
-    """Register a named chain. Overwrites one of the same name."""
-    name = (name or "").strip().lower()
+class VoiceFx:
+    def __init__(self, cfg=None):
+        cfg = cfg or {}
+        self.on = bool(cfg.get("enabled"))
+        self.default_board = None
+        self.voice_boards = {}
+        self.named_boards = {}
 
-    if not name:
-        return None
+        if not self.on:
+            logger.info("[voice_fx] disabled")
+            return
 
-    stages = _stages_of(chain_cfg)
-    _named_chains[name] = stages
-    _named_boards[name] = _build(stages)
+        self.default_board = _build(cfg.get("chain") or [])
 
-    return name
+        for vid, sub in (cfg.get("per_voice") or {}).items():
+            self.voice_boards[vid] = _build(sub.get("chain") or [])
 
+        for name, chain in (cfg.get("chains") or {}).items():
+            self.set_chain(name, chain)
 
-def del_chain(name):
-    name = (name or "").strip().lower()
-    _named_chains.pop(name, None)
-    _named_boards.pop(name, None)
+        logger.info(
+            f"[voice_fx] enabled; default_stages={len(self.default_board)} "
+            f"per_voice={list(self.voice_boards)} chains={list(self.named_boards)}"
+        )
 
+    def set_chain(self, name, chain_cfg):
+        """Register a named chain. Overwrites one of the same name."""
+        name = (name or "").strip().lower()
 
-def chains():
-    return dict(_named_chains)
+        if not name:
+            return None
 
+        self.named_boards[name] = _build(_stages_of(chain_cfg))
 
-def enabled():
-    return bool(_cfg.get("enabled")) and _default_board is not None
+        return name
 
+    def del_chain(self, name):
+        name = (name or "").strip().lower()
+        self.named_boards.pop(name, None)
 
-def process_wav(in_path, voice_id=None, fx=None):
-    """Apply effects chain. Returns new wav path, or in_path on no-op/error."""
-    if not enabled():
-        return in_path
+    def process_wav(self, in_path, voice_id=None, fx=None):
+        """Apply effects chain. Returns new wav path, or in_path on no-op/error."""
+        if not self.on:
+            return in_path
 
-    fx = (fx or "").strip().lower()
-    board = _named_boards.get(fx) if fx else None
+        fx = (fx or "").strip().lower()
+        board = self.named_boards.get(fx) if fx else None
 
-    if board is None:
-        board = _voice_boards.get(voice_id, _default_board)
+        if board is None:
+            board = self.voice_boards.get(voice_id, self.default_board)
 
-    if board is None or len(board) == 0:
-        return in_path
+        if board is None or len(board) == 0:
+            return in_path
 
-    fd, out_path = tempfile.mkstemp(suffix=".fx.wav")
-    os.close(fd)
+        fd, out_path = tempfile.mkstemp(suffix=".fx.wav")
+        os.close(fd)
 
-    try:
-        with AudioFile(in_path) as f:
-            sr = f.samplerate
-            audio = f.read(f.frames)
+        try:
+            with AudioFile(in_path) as f:
+                sr = f.samplerate
+                audio = f.read(f.frames)
 
-        processed = board(audio, sr)
+            processed = board(audio, sr)
 
-        with AudioFile(out_path, "w", sr, processed.shape[0]) as fo:
-            fo.write(processed)
+            with AudioFile(out_path, "w", sr, processed.shape[0]) as fo:
+                fo.write(processed)
 
-        return out_path
-    except Exception as e:
-        logger.warning(f"[voice_fx] process failed: {e}")
+            return out_path
+        except Exception as e:
+            logger.warning(f"[voice_fx] process failed: {e}")
 
-        with contextlib.suppress(Exception):
-            os.remove(out_path)
+            with contextlib.suppress(Exception):
+                os.remove(out_path)
 
-        return in_path
+            return in_path

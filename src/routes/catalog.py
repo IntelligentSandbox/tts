@@ -1,118 +1,119 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from echo_common import logger
 from fastapi import APIRouter, HTTPException, Request
 
 import config_store
-import db
-import sfx
-import tts as eng
-from roles import audit, need
+from routes.models import ProfileReq, SfxAliasReq, VoiceAliasReq
 
 
-def build(cfg):
+def _normal_name(n):
+    return (n or "").strip().lower()
+
+
+@dataclass(frozen=True)
+class EntryKind:
+    model: type
+    value_of: Callable
+    setter: Callable
+    deleter: Callable
+    section: str
+
+
+def build(engine, entries):
     r = APIRouter(prefix="/api/catalog")
-
-    def _value_for_voice_alias(j):
-        v = (j.get("voice") or "").strip()
-
-        if not v:
-            raise HTTPException(400, "voice required")
-
-        return v
-
-    def _value_for_sfx_alias(j):
-        t = (j.get("target_id") or "").strip()
-
-        if not t:
-            raise HTTPException(400, "target_id required")
-
-        return t
+    res = engine.resolver
+    sounds = engine.sounds
 
     kinds = {
-        "voice_alias": (
-            _value_for_voice_alias,
-            eng.set_alias,
-            eng.del_alias,
-            "aliases",
-            lambda n: (n or "").strip().lower(),
+        "voice_alias": EntryKind(
+            model=VoiceAliasReq,
+            value_of=lambda b: b.voice,
+            setter=res.set_alias,
+            deleter=res.del_alias,
+            section="aliases",
         ),
-        "profile": (
-            lambda j: {k: v for k, v in j.items() if k != "name"},
-            eng.set_profile,
-            eng.del_profile,
-            "profiles",
-            lambda n: (n or "").strip().lower(),
+        "profile": EntryKind(
+            model=ProfileReq,
+            value_of=lambda b: b.model_dump(exclude_none=True),
+            setter=res.set_profile,
+            deleter=res.del_profile,
+            section="profiles",
         ),
-        "sfx_alias": (
-            _value_for_sfx_alias,
-            lambda n, v: sfx.set_sfx_alias(n, v, cfg),
-            sfx.del_sfx_alias,
-            "sfx_aliases",
-            lambda n: n,
+        "sfx_alias": EntryKind(
+            model=SfxAliasReq,
+            value_of=lambda b: b.target_id,
+            setter=sounds.set_alias,
+            deleter=sounds.del_alias,
+            section="sfx_aliases",
         ),
     }
 
-    def _kind(kind):
-        if kind not in kinds:
-            raise HTTPException(404, "unknown kind")
-
-        return kinds[kind]
-
     def _everything():
         return {
-            "voices": eng.voices(),
-            "voice_aliases": eng.get_aliases(),
-            "profiles": eng.get_profiles(),
-            "presets": sorted(eng.presets),
-            "sounds": sfx.get_sfx_index(cfg),
-            "sfx_aliases": sfx.get_sfx_aliases(),
+            "voices": engine.voices.all(),
+            "voice_aliases": res.aliases,
+            "profiles": res.profiles,
+            "presets": sorted(res.presets),
+            "sounds": sounds.index(),
+            "sfx_aliases": dict(sounds.aliases),
             # only what the panel made is safe to remove (the rest is hand written)
             "removable": {
-                kind: sorted(db.panel_entries(section))
-                for kind, (_, _, _, section, _) in kinds.items()
+                kind: sorted(entries.names(spec.section))
+                for kind, spec in kinds.items()
             },
         }
 
-    @r.get("", dependencies=[need("service")])
+    @r.get("")
     def get_catalog():
         return _everything()
 
-    @r.put("/{kind}/{name}", dependencies=[need("admin")])
-    async def put_entry(kind, name, req: Request):
-        value_of, setter, _, section, norm = _kind(kind)
-        n = norm(name)
-
-        if not n:
-            raise HTTPException(400, "name required")
-
-        try:
-            j = await req.json()
-        except Exception:
-            raise HTTPException(400, "invalid json") from None
-
-        value = value_of(j)
-
-        try:
-            setter(n, value)
-        except ValueError:
-            raise HTTPException(400, "bad entry") from None
-
-        # panel edits belong in the config or they vanish on the next restart
-        config_store.save_entry(req.app.state.cfg_path, section, n, value)
-        db.mark_panel_entry(section, n)
-        audit(req, f"set {kind} {n}")
+    @r.post("/reload")
+    def reload_all():
+        logger.info("[catalog] reloaded voices, sounds and mod terms")
+        engine.reload()
         return _everything()
 
-    @r.delete("/{kind}/{name}", dependencies=[need("admin")])
-    def delete_entry(kind, name, req: Request):
-        _, _, deleter, section, norm = _kind(kind)
-        n = norm(name)
+    def put_route(spec):
+        def put_entry(name, req: Request, body: spec.model):
+            n = _normal_name(name)
 
-        if n not in db.panel_entries(section):
-            raise HTTPException(403, "defined in the config (edit the file)")
+            if not n:
+                raise HTTPException(400, "name required")
 
-        deleter(n)
-        config_store.delete_entry(req.app.state.cfg_path, section, n)
-        db.unmark_panel_entry(section, n)
-        audit(req, f"deleted {kind} {n}")
-        return _everything()
+            value = spec.value_of(body)
+
+            try:
+                spec.setter(n, value)
+            except ValueError:
+                raise HTTPException(400, "bad entry") from None
+
+            # panel edits belong in the config or they vanish on the next restart
+            config_store.save_entry(req.app.state.cfg_path, spec.section, n, value)
+            entries.mark(spec.section, n)
+            return _everything()
+
+        return put_entry
+
+    def delete_route(spec):
+        def delete_entry(name, req: Request):
+            n = _normal_name(name)
+
+            if n not in entries.names(spec.section):
+                raise HTTPException(403, "defined in the config (edit the file)")
+
+            spec.deleter(n)
+            config_store.delete_entry(req.app.state.cfg_path, spec.section, n)
+            entries.unmark(spec.section, n)
+            return _everything()
+
+        return delete_entry
+
+    # Each kind gets its own route so its body is checked against its own model
+    for kind, spec in kinds.items():
+        path = f"/{kind}/{{name}}"
+        r.add_api_route(path, put_route(spec), methods=["PUT"])
+        r.add_api_route(path, delete_route(spec), methods=["DELETE"])
 
     return r

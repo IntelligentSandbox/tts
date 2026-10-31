@@ -32,12 +32,10 @@ _leet = {
 
 
 def _remove_emojis(s):
-    """Remove Unicode emoji characters from a string."""
     return emoji.replace_emoji(s, replace="")
 
 
 def _mask_token(src):
-    """Mask all but the first and last character with asterisks."""
     return (
         "*" * len(src)
         if len(src) <= MASK_WHOLE_WORD_CHARS
@@ -66,45 +64,71 @@ def _censor_sound(word, mode):
 
 
 def _normalize(s):
-    """Normalize a Unicode string using NFKD and remove combining characters."""
+    """Strip accents so "é" compares as "e"."""
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if not unicodedata.combining(ch))
 
 
 def _obfus_rx(term):
-    """Compile a regex that matches obfuscated variants of a term."""
+    """Match leetspeak and spaced out spellings like "n.a$ty" too."""
     t = _normalize(term.lower())
     parts = [
         _leet.get(ch, re.escape(ch)) if ch.isalnum() else re.escape(ch) for ch in t
     ]
     glue = r"[^a-zA-Z0-9]{0,2}"
-    return re.compile(glue.join(parts), re.IGNORECASE)
+    # a term only counts as a whole word so "ass" leaves "class" alone
+    body = glue.join(parts)
+    return re.compile(rf"(?<![a-zA-Z0-9]){body}(?![a-zA-Z0-9])", re.IGNORECASE)
+
+
+def _fold(s):
+    """Fold accents off and keep where each char came from in the original."""
+    out, src = [], []
+
+    for i, ch in enumerate(s):
+        for f in _normalize(ch):
+            out.append(f)
+            src.append(i)
+
+    return "".join(out), src
+
+
+def _sub_folded(rx, s, repl):
+    """Match on the folded text but replace in the original so accents survive."""
+    folded, src = _fold(s)
+    out, last = [], 0
+
+    for m in rx.finditer(folded):
+        if m.start() == m.end():
+            continue
+
+        a = src[m.start()]
+        b = src[m.end() - 1] + 1
+        out += [s[last:a], repl(s[a:b])]
+        last = b
+
+    out.append(s[last:])
+    return "".join(out)
 
 
 class SlurCensor:
     def __init__(self, path):
-        """
-        Initialize a SlurCensor instance
-
-        :param path: Path to block list
-        """
         self.path = path
         self.rxs = []
         self.raw = []
         self.lines = []
         self.mtime = None
         if path:
-            self._reload()
+            self.reload()
 
     def _read_lines(self):
-        """Read every line from the file, comments and blanks included"""
+        """Comments and blanks are kept so a save writes them back."""
         if not self.path or not os.path.exists(self.path):
             return []
         with open(self.path, encoding="utf-8") as f:
             return [ln.rstrip("\n") for ln in f]
 
-    def _reload(self):
-        """Reload terms and compile regexes from the file"""
+    def reload(self):
         self.lines = self._read_lines()
         terms = [
             ln.strip()
@@ -119,7 +143,7 @@ class SlurCensor:
             self.mtime = None
 
     def ensure_fresh(self):
-        """Reload the terms if the file has been modified"""
+        """Pick up hand edits to the file without a reload call."""
         if not self.path:
             return
         try:
@@ -127,42 +151,30 @@ class SlurCensor:
         except OSError:
             mt = None
         if mt and mt != self.mtime:
-            self._reload()
-
-    def reload(self):
-        """Force reload of terms and regexes from teh file"""
-        self._reload()
+            self.reload()
 
     def list(self):
-        """Return the current list of terms."""
         self.ensure_fresh()
         return list(self.raw)
 
     def add(self, term):
-        """Add a term to the blocklist and save to file."""
-        term = (term or "").strip()
-        if not term or term in self.raw:
-            return False
+        if term in self.raw:
+            return
         self.raw.append(term)
         self.rxs.append(_obfus_rx(term))
         self.lines.append(term)
         self._save()
-        return True
 
     def remove(self, term):
-        """Remove a term from the blocklist and save to file."""
-        term = (term or "").strip()
         if term not in self.raw:
-            return False
+            return
         idx = self.raw.index(term)
         self.raw.pop(idx)
         self.rxs.pop(idx)
         self.lines = [ln for ln in self.lines if ln.strip() != term]
         self._save()
-        return True
 
     def _save(self):
-        """Persist the file, keeping comments and blank lines intact."""
         if not self.path:
             return
         with open(self.path, "w", encoding="utf-8") as f:
@@ -173,55 +185,27 @@ class SlurCensor:
 
 
 class Moderator:
-    def __init__(self, cfg=None):
-        """
-        Initialize a Moderator instance
-
-        :param cfg: Optional configuration with keys:
-                        'strip_urls', 'strip_emojis', 'censor_slurs', 'blocklist_path'
-        """
-        cfg = cfg or {}
+    def __init__(self, cfg):
         self.strip_urls = bool(cfg.get("strip_urls", True))
         self.strip_emojis = bool(cfg.get("strip_emojis", True))
         self.censor_slurs = bool(cfg.get("censor_slurs", True))
         self.censor_mode = (cfg.get("censor_mode") or "drop").lower()
-        bl_path = cfg.get("blocklist_path")
-        self.censor = SlurCensor(bl_path) if bl_path else SlurCensor(None)
+        self.censor = SlurCensor(cfg.get("blocklist_path"))
 
-    def filter(self, s, mode=None):
-        """
-        Filter a string based on the config rules
-
-        :param s: Input string
-        :param mode: mask, drop, beep, duck, or random (None uses config)
-        :return: Tuple of filtered string and dictionary of flags e.g.,
-                    {'urls': 0/1, 'emojis': 0/1', 'slurs': count}
-        """
-        mode = mode or self.censor_mode
+    def filter(self, s):
+        mode = self.censor_mode
         out = s or ""
-        flags = {"urls": 0, "emojis": 0, "slurs": 0}
 
         if self.strip_urls:
-            before = out
             out = _url_re.sub("[link]", out)
-            if out != before:
-                flags["urls"] = 1
 
         if self.strip_emojis:
-            before = out
             out = _remove_emojis(out)
-            if out != before:
-                flags["emojis"] = 1
 
-        if self.censor_slurs and self.censor:
+        if self.censor_slurs:
             self.censor.ensure_fresh()
-            n = 0
 
-            def repl(m):
-                nonlocal n
-                n += 1
-                src = m.group(0)
-
+            def repl(src):
                 if mode == "mask":
                     return _mask_token(src)
 
@@ -231,98 +215,21 @@ class Moderator:
                 return ""
 
             for rx in self.censor.rxs:
-                out = rx.sub(repl, out)
-            flags["slurs"] = n
+                out = _sub_folded(rx, out, repl)
 
-        return out.strip(), flags
+        return out.strip()
+
+    def state(self):
+        return {
+            "terms": self.censor.list(),
+            "mode": self.censor_mode,
+            "modes": list(CENSOR_MODES),
+            "censoring": self.censor_slurs,
+        }
 
 
-_moderator = None
-
-
-def init_moderator(cfg, base_dir=None):
-    """Initialize the global moderator instance."""
-    global _moderator
+def build_moderator(cfg, base_dir=None):
     mcfg = dict(cfg.get("moderation") or {})
     if mcfg.get("blocklist_path"):
         mcfg["blocklist_path"] = resolve_path(mcfg["blocklist_path"], base_dir)
-    _moderator = Moderator(mcfg) if mcfg.get("enabled", False) else None
-
-
-def mod_enabled():
-    """Check if moderation is enabled."""
-    return _moderator is not None
-
-
-def mod_list():
-    """List moderation terms."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-    return _moderator.censor.list()
-
-
-def mod_add(term):
-    """Add a moderation term."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-    return {"added": _moderator.censor.add(term)}
-
-
-def mod_remove(term):
-    """Remove a moderation term."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-    return {"removed": _moderator.censor.remove(term)}
-
-
-def mod_reload():
-    """Reload moderation terms."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-    _moderator.censor.reload()
-    return {"reloaded": True}
-
-
-def mod_mode():
-    """Get the current censor mode."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-
-    return {
-        "mode": _moderator.censor_mode,
-        "modes": list(CENSOR_MODES),
-        "censoring": _moderator.censor_slurs,
-    }
-
-
-def mod_set_mode(mode):
-    """Set the censor mode at runtime."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-
-    mode = (mode or "").strip().lower()
-
-    if mode not in CENSOR_MODES:
-        raise ValueError("bad mode")
-
-    _moderator.censor_mode = mode
-
-    return {"mode": mode}
-
-
-def mod_set_censoring(on):
-    """Turn slur censoring on or off without a restart."""
-    if not _moderator:
-        raise RuntimeError("moderation disabled")
-
-    _moderator.censor_slurs = bool(on)
-
-    return {"censoring": _moderator.censor_slurs}
-
-
-def filter_text(text, mode=None):
-    """Filter text using moderation rules."""
-    if not _moderator:
-        return text, {"urls": 0, "emojis": 0, "slurs": 0}
-
-    return _moderator.filter(text, mode)
+    return Moderator(mcfg) if mcfg.get("enabled", False) else None

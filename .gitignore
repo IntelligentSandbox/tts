@@ -1,13 +1,12 @@
 __pycache__/
 .pytest_cache/
-src/tts-venv/
-src/private/
-src/*.log
-src/data/
-tts-error.log
+tts-venv/
+config/private/
+*.log
 data/
 voices/*.onnx
 voices/*.onnx.json
 voices/piper/
+voices/kokoro/
 sounds/*
 !sounds/mod/
