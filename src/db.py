@@ -1,27 +1,6 @@
 import os
 import sqlite3
 
-TOKENS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS tokens (
-    jti TEXT PRIMARY KEY,
-    expires INTEGER,
-    created_by TEXT,
-    created_at INTEGER,
-    revoked INTEGER DEFAULT 0,
-    note TEXT
-)
-"""
-
-EMBEDS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS embeds (
-    embed_id TEXT PRIMARY KEY,
-    jti TEXT,
-    created_at INTEGER,
-    note TEXT,
-    origin TEXT
-)
-"""
-
 PANEL_ENTRIES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS panel_entries (
     section TEXT,
@@ -30,141 +9,31 @@ CREATE TABLE IF NOT EXISTS panel_entries (
 )
 """
 
-_conn = None
 
+class PanelEntries:
+    """The catalog entries the panel made, which are the only ones it may remove."""
 
-def init_db(path):
-    """Initialize database."""
-    global _conn
+    def __init__(self, path):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.execute(PANEL_ENTRIES_SCHEMA)
+        self._conn.commit()
 
-    d = os.path.dirname(path) or "."
-    os.makedirs(d, exist_ok=True)
+    def mark(self, section, name):
+        self._conn.execute(
+            "INSERT OR IGNORE INTO panel_entries (section, name) VALUES (?, ?)",
+            (section, name),
+        )
+        self._conn.commit()
 
-    _conn = sqlite3.connect(path, check_same_thread=False)
-    _conn.row_factory = sqlite3.Row
+    def unmark(self, section, name):
+        self._conn.execute(
+            "DELETE FROM panel_entries WHERE section=? AND name=?", (section, name)
+        )
+        self._conn.commit()
 
-    c = _conn.cursor()
-    c.execute(TOKENS_SCHEMA)
-    c.execute(EMBEDS_SCHEMA)
-    c.execute(PANEL_ENTRIES_SCHEMA)
-    _conn.commit()
-
-
-def _token_row(r):
-    return {
-        "jti": r["jti"],
-        "expires": r["expires"],
-        "created_by": r["created_by"],
-        "created_at": r["created_at"],
-        "revoked": bool(r["revoked"]),
-        "note": r["note"],
-    }
-
-
-def _embed_row(r):
-    return {
-        "embed_id": r["embed_id"],
-        "jti": r["jti"],
-        "created_at": r["created_at"],
-        "note": r["note"],
-        "origin": r["origin"],
-    }
-
-
-def insert_token(jti, expires, created_by, created_at, note=""):
-    """Insert a token."""
-    if _conn is None:
-        raise RuntimeError("db not initialized")
-
-    c = _conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO tokens"
-        " (jti, expires, created_by, created_at, revoked, note)"
-        " VALUES (?, ?, ?, ?, 0, ?)",
-        (jti, int(expires), created_by, int(created_at), note),
-    )
-    _conn.commit()
-
-
-def get_token(jti):
-    """Get a token by jti."""
-    c = _conn.cursor()
-    r = c.execute("SELECT * FROM tokens WHERE jti=?", (jti,)).fetchone()
-
-    if not r:
-        return None
-
-    return _token_row(r)
-
-
-def revoke_token(jti):
-    """Revoke a token."""
-    c = _conn.cursor()
-    r = c.execute("UPDATE tokens SET revoked=1 WHERE jti=?", (jti,))
-    _conn.commit()
-    return r.rowcount > 0
-
-
-def insert_embed(embed_id, jti, created_at, note="", origin=None):
-    """Insert an embed."""
-    c = _conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO embeds (embed_id, jti, created_at, note, origin)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (embed_id, jti, int(created_at), note, origin),
-    )
-    _conn.commit()
-
-
-def get_embed(embed_id):
-    """Get an embed by id."""
-    c = _conn.cursor()
-    r = c.execute("SELECT * FROM embeds WHERE embed_id=?", (embed_id,)).fetchone()
-
-    if not r:
-        return None
-
-    return _embed_row(r)
-
-
-def delete_embed(embed_id):
-    """Delete an embed."""
-    c = _conn.cursor()
-    r = c.execute("DELETE FROM embeds WHERE embed_id=?", (embed_id,))
-    _conn.commit()
-    return r.rowcount > 0
-
-
-def list_embeds():
-    """List all embeds."""
-    c = _conn.cursor()
-    rows = c.execute(
-        "SELECT embed_id, jti, created_at, note, origin"
-        " FROM embeds ORDER BY created_at DESC"
-    ).fetchall()
-    return [_embed_row(r) for r in rows]
-
-
-def mark_panel_entry(section, name):
-    """Record that the panel created this catalog entry."""
-    c = _conn.cursor()
-    c.execute(
-        "INSERT OR IGNORE INTO panel_entries (section, name) VALUES (?, ?)",
-        (section, name),
-    )
-    _conn.commit()
-
-
-def unmark_panel_entry(section, name):
-    c = _conn.cursor()
-    c.execute("DELETE FROM panel_entries WHERE section=? AND name=?", (section, name))
-    _conn.commit()
-    return c.rowcount > 0
-
-
-def panel_entries(section):
-    c = _conn.cursor()
-    rows = c.execute(
-        "SELECT name FROM panel_entries WHERE section=?", (section,)
-    ).fetchall()
-    return {r["name"] for r in rows}
+    def names(self, section):
+        rows = self._conn.execute(
+            "SELECT name FROM panel_entries WHERE section=?", (section,)
+        ).fetchall()
+        return {r[0] for r in rows}

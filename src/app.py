@@ -6,12 +6,13 @@ from echo_common import (
     configure_logging,
     load_cfg,
     logger,
+    service_root,
     service_version,
 )
 
 from api import make_app
 
-DEFAULT_CFG = os.path.join(os.path.dirname(__file__), "private", "config.yaml")
+DEFAULT_CFG = os.path.join(service_root(__file__), "config", "private", "config.yaml")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

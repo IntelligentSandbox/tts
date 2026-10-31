@@ -36,7 +36,7 @@ def delete_entry(path, section, name):
         data = _yaml.load(f) or {}
 
     if name not in (data.get(section) or {}):
-        return False
+        return
 
     del data[section][name]
 
@@ -44,4 +44,3 @@ def delete_entry(path, section, name):
         _yaml.dump(data, f)
 
     logger.info(f"[config] removed {section}.{name}")
-    return True

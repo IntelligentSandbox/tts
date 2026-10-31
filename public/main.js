@@ -1,7 +1,5 @@
 import { api } from './api.js'
 
-const POLL_IDLE_MS = 600
-const POLL_ACTIVE_MS = 400
 const BLOCK_SHOWN_MAX = 50
 
 let ALIAS_SET = new Set()
@@ -36,31 +34,6 @@ function payload(text, voice) {
   }
 }
 
-async function getPanelStatus() {
-  const me = await api.panel.status()
-  const role = me.role
-  const s = { admin: role === 'admin', mod: role === 'admin' || role === 'mod' }
-  byId('auth_status').textContent = role ? `signed in as ${role}` : 'not logged in'
-  const canTts = s.mod
-  byId('submit').disabled = !canTts
-  for (const id of ['catalog_admin', 'token_admin', 'oauth_admin']) {
-    byId(id).hidden = !s.admin
-  }
-  byId('mod_panel').hidden = !s.mod
-
-  if (s.admin) {
-    loadEmbeds()
-    loadMappings()
-  }
-
-  if (s.mod) {
-    loadCensorMode()
-    loadBlocklist()
-  }
-  byId('pollq').disabled = !(s.admin || s.mod)
-  if (byId('pollq').disabled) byId('pollq').checked = false
-  return s
-}
 
 async function loadVoices() {
   const sel = byId('voices')
@@ -73,6 +46,7 @@ async function loadVoices() {
   } catch { }
 
   const voices = cat.voices || []
+  byId('novoices').hidden = voices.length > 0
   const aliases = cat.voice_aliases || {}
   const profs = cat.profiles || {}
 
@@ -293,18 +267,21 @@ function renderSfxAdmin(index, aliases) {
 function parseParts(input, fallbackVoice) {
   const reVoice = /(^|\s)([a-z0-9_]+):\s*/gi
   const reSfx = /\{([a-z0-9_-]+)\}/gi
-  const reSpeed = /\[(fast|slow)\]/gi
   const parts = []
   let curVoice = fallbackVoice || null
   let i = 0,
     m,
     sfxCount = 0
 
-  let speedMult = 1.0
-  const speedMatch = reSpeed.exec(input)
-  if (speedMatch) {
-    speedMult = speedMatch[1].toLowerCase() === 'fast' ? 0.5 : 2.0
-    input = input.replace(reSpeed, '').trim()
+  // a [tag] is a preset for the whole message, not just the part it sits in
+  let preset = null
+  const known = [...(byId('preset')?.options || [])].map((o) => o.value)
+  for (const tm of input.matchAll(/\[([a-z0-9_-]+)\]/gi)) {
+    if (known.includes(tm[1].toLowerCase())) {
+      preset = tm[1].toLowerCase()
+      input = input.slice(0, tm.index) + ' ' + input.slice(tm.index + tm[0].length)
+      break
+    }
   }
 
   function pushText(chunk) {
@@ -336,31 +313,29 @@ function parseParts(input, fallbackVoice) {
   }
   pushText(input.slice(i))
   const resultParts = parts.length ? parts : [{ type: 'tts', text: input, voice: fallbackVoice || null }]
-  return { parts: resultParts, speedMult }
+  return { parts: resultParts, preset }
 }
 
 async function playText(fullText, fallbackVoice, statusEl) {
   const a = byId('player')
-  const { parts, speedMult } = parseParts(fullText, fallbackVoice)
+  const { parts, preset } = parseParts(fullText, fallbackVoice)
   const single = parts.length === 1 && parts[0].type !== 'sfx'
   statusEl.textContent = single ? 'playing...' : 'rendering...'
 
-  let ls = numOrNull('length_scale')
-  if (speedMult !== 1.0) {
-    ls = (ls || 1.0) * speedMult
-  }
+  // a typed [tag] beats the dropdown
+  const chosen = preset || byId('preset')?.value || null
 
   try {
     const body = single
-      ? { ...payload(parts[0].text, parts[0].voice), length_scale: ls }
+      ? { ...payload(parts[0].text, parts[0].voice), preset: chosen }
       : {
         parts: parts.map((p) => {
           if (p.type === 'sfx') return { sfx: p.name }
           return Object.assign({ text: p.text }, voiceOrProfile(p.voice))
         }),
         format: 'mp3',
-        preset: byId('preset')?.value || null,
-        length_scale: ls
+        preset: chosen,
+        length_scale: numOrNull('length_scale')
       }
     const res = await api.tts(body)
     // res: { arrayBuffer, contentType }
@@ -371,15 +346,13 @@ async function playText(fullText, fallbackVoice, statusEl) {
     statusEl.textContent = 'done'
   } catch (err) {
     console.error(err)
-    statusEl.textContent = 'error'
+    statusEl.textContent = err.message
   }
 }
 
-async function addRow(text, voice, jobId, opts = {}) {
-  const allowAutoplay = opts.allowAutoplay !== false
+async function addRow(text, voice) {
   const tbody = byId('list')
   const tr = document.createElement('tr')
-  tr.dataset.jobId = jobId || ''
   tr.dataset.text = text
   tr.dataset.voice = voice || ''
 
@@ -390,30 +363,15 @@ async function addRow(text, voice, jobId, opts = {}) {
   const tdVP = document.createElement('td')
   tdVP.textContent = `${voice || '(auto)'} / ${byId('preset').value || '(none)'}`
   const tdStat = document.createElement('td')
-  tdStat.textContent = jobId ? 'queued' : 'ready'
+  tdStat.textContent = 'ready'
   const tdAct = document.createElement('td')
   tdAct.innerHTML = `
     <button data-action="play-text">play</button>
     <button data-action="remove-row">remove</button>
-    ${jobId ? '<button data-action="delete-job">delete</button>' : ''}
   `
   tr.append(tdTime, tdText, tdVP, tdStat, tdAct)
   tbody.prepend(tr)
-  if (allowAutoplay && byId('autoplay').checked) playText(text, voice, tdStat)
-}
-
-async function pollQueue() {
-  if (!byId('pollq').checked) return setTimeout(pollQueue, POLL_IDLE_MS)
-  try {
-    const { items } = await api.queue.list()
-    const shown = new Set([...byId('list').querySelectorAll('tr')].map((tr) => tr.dataset.jobId))
-    for (const job of items) {
-      if (!job.text || shown.has(job.id)) continue
-      const v = job.voice || byId('voices').value || null
-      await addRow(job.text, v, job.id, { allowAutoplay: false })
-    }
-  } catch { }
-  setTimeout(pollQueue, POLL_ACTIVE_MS)
+  if (byId('autoplay').checked) playText(text, voice, tdStat)
 }
 
 document.addEventListener('click', async (e) => {
@@ -423,12 +381,6 @@ document.addEventListener('click', async (e) => {
 
   try {
     switch (a) {
-      case 'logout':
-        BLOCK_SHOWN = false
-        await api.panel.logout()
-        await getPanelStatus()
-        await Promise.all([loadVoices(), loadSounds()])
-        break
       case 'alias-add': {
         const name = byId('alias_name').value.trim().toLowerCase()
         const voice = byId('alias_target').value
@@ -499,41 +451,15 @@ document.addEventListener('click', async (e) => {
       case 'remove-row':
         row.remove()
         break
-      case 'delete-job':
-        if (row.dataset.jobId) await api.queue.del(row.dataset.jobId)
-        row.remove()
-        break
       case 'submit-text': {
         const t = byId('tts').value.trim()
         const v = byId('voices').value || null
-        if (!t || byId('submit').disabled) return
-        await addRow(t, v, null)
+        if (!t) return
+        await addRow(t, v)
         byId('tts').value = ''
         byId('tts').focus()
         break
       }
-      case 'mint-token':
-        await handleMintToken()
-        break
-      case 'map-add': {
-        const remote = byId('map_remote').value.trim()
-        if (!remote) return
-        await api.auth.mapping({
-          provider: byId('map_provider').value,
-          remote,
-          role: byId('map_role').value
-        })
-        byId('map_remote').value = ''
-        await loadMappings()
-        break
-      }
-      case 'map-del':
-        await api.auth.delMapping(e.target.dataset.prov, e.target.dataset.term)
-        await loadMappings()
-        break
-      case 'login-oauth':
-        window.location.href = '/api/auth/oauth/twitch'
-        break
     }
   } catch (err) {
     console.error(err)
@@ -544,10 +470,6 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('change', (e) => {
   const a = e.target.dataset.action
   if (!a) return
-  const auto = byId('autoplay')
-  const poll = byId('pollq')
-  if (a === 'toggle-autoplay' && auto.checked) poll.checked = false
-  if (a === 'toggle-poll' && poll.checked) auto.checked = false
   if (a === 'censor-mode') {
     api.mod.setMode(e.target.value).catch((err) => {
       console.error(err)
@@ -565,121 +487,6 @@ document.addEventListener('change', (e) => {
   }
 })
 
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch { }
-
-  // the clipboard api is https only so fall back without revealing the text
-  const ta = document.createElement('textarea')
-  ta.value = text
-  ta.setAttribute('readonly', '')
-  ta.style.position = 'fixed'
-  ta.style.left = '-9999px'
-  document.body.appendChild(ta)
-  ta.select()
-
-  let ok = false
-  try {
-    ok = document.execCommand('copy')
-  } catch { }
-
-  ta.remove()
-  return ok
-}
-
-function addEmbedRow(url, expires) {
-  const full = new URL(url, location.origin).href
-  const eid = new URL(full).searchParams.get('embed') || ''
-  const row = document.createElement('div')
-
-  const label = document.createElement('span')
-  label.textContent = location.origin + '/api/overlay?embed=' + (eid ? eid.slice(0, 6) + '***' : '***')
-  label.textContent += expires ? ' exp ' + new Date(expires * 1000).toLocaleString() : ' no expiry'
-
-  const btn = document.createElement('button')
-  btn.textContent = 'copy'
-  btn.style.marginLeft = '6px'
-  btn.addEventListener('click', async () => {
-    const ok = await copyText(full)
-    btn.textContent = ok ? 'copied' : 'copy failed'
-    setTimeout(() => (btn.textContent = 'copy'), 1200)
-  })
-
-  const del = document.createElement('button')
-  del.textContent = 'delete'
-  del.style.marginLeft = '4px'
-  del.addEventListener('click', async () => {
-    del.disabled = true
-    try {
-      await api.overlay.del(eid)
-      row.remove()
-    } catch (err) {
-      del.disabled = false
-      console.error(err)
-      alert(err.message)
-    }
-  })
-
-  row.append(label, btn, del)
-  byId('mint_result').appendChild(row)
-}
-
-async function loadEmbeds() {
-  const out = byId('mint_result')
-  out.innerHTML = ''
-
-  try {
-    const j = await api.overlay.embeds()
-    for (const e of j.embeds || []) {
-      if (e.revoked) continue
-      addEmbedRow(e.url, e.expires)
-    }
-  } catch (err) {
-    console.error(err)
-  }
-}
-
-async function handleMintToken() {
-  const ttl = parseInt(byId('token_ttl').value || '3600', 10)
-  const originElem = byId('token_origin')
-  const originVal = originElem ? originElem.value.trim() || null : null
-  try {
-    const res = await api.overlay.embed({ ttl, origin: originVal })
-    addEmbedRow(res.url || '/api/overlay?embed=' + res.embed_id, res.expires)
-  } catch (err) {
-    const errEl = document.createElement('div')
-    errEl.style.color = 'red'
-    errEl.textContent = 'error: ' + err.message
-    byId('mint_result').appendChild(errEl)
-  }
-}
-
-async function loadMappings() {
-  const host = byId('maplist')
-  if (!host) return
-
-  try {
-    const { mappings } = await api.auth.mappings()
-    host.innerHTML = ''
-    for (const [prov, entries] of Object.entries(mappings || {})) {
-      for (const [remote, role] of Object.entries(entries || {})) {
-        const chip = document.createElement('span')
-        chip.className = 'chip'
-        chip.textContent = `${prov}:${remote} \u2192 ${role}`
-        const x = document.createElement('button')
-        x.dataset.action = 'map-del'
-        x.dataset.prov = prov
-        x.dataset.term = remote
-        x.textContent = '\u00d7'
-        chip.appendChild(x)
-        host.appendChild(chip)
-      }
-    }
-  } catch { }
-}
-
-getPanelStatus()
-  .then(() => Promise.all([loadVoices(), loadSounds()]))
-  .then(pollQueue)
+loadCensorMode()
+loadBlocklist()
+Promise.all([loadVoices(), loadSounds()])

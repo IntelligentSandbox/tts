@@ -1,3 +1,3 @@
-from routes import admin, auth, catalog, overlay, queue, synth
+from routes import catalog, moderation, synth
 
-__all__ = ["admin", "auth", "catalog", "overlay", "queue", "synth"]
+__all__ = ["catalog", "moderation", "synth"]

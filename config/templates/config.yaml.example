@@ -1,4 +1,4 @@
-# paths resolve relative to the service root. piper voices live in <voices_dir>/piper/, kokoro downloads on demand
+# paths resolve relative to the service root. piper voices live in <voices_dir>/piper/ and kokoro in <voices_dir>/kokoro/
 voices_dir: voices
 sounds_dir: sounds
 
@@ -51,17 +51,4 @@ moderation:
   strip_urls: true
   strip_emojis: true
   censor_slurs: true
-  blocklist_path: src/private/mod_blocklist.txt
-
-auth:
-  enabled: true
-  file: src/private/secrets.yaml
-  # grants the panel admin without an oauth login (local dev only)
-  dev_admin: false
-
-session:
-  file: src/private/secrets.yaml
-  # lax | strict | none
-  same_site: lax
-  # true when serving over HTTPS
-  secure: false
+  blocklist_path: config/private/mod_blocklist.txt
